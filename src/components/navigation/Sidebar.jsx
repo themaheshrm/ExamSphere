@@ -7,23 +7,41 @@ import {
   LayoutDashboard,
   FileSpreadsheet,
   HelpCircle,
-  Users,
   Server,
   Settings,
-  ShieldAlert,
-  ChevronRight,
+  LogIn,
+  GraduationCap,
+  Building,
+  ShieldCheck,
+  LogOut,
+  User,
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { USER_ROLES } from '../../utils/constants';
 
 export default function Sidebar({ isOpen, onClose }) {
   const location = useLocation();
+  const { user, isAuthenticated, logout } = useAuth();
 
   const navigationSections = [
     {
-      title: 'Examination Management',
+      title: 'Authentication & Access',
       items: [
-        { label: 'Admin Overview', path: '/admin', icon: LayoutDashboard },
-        { label: 'Assessment Rosters', path: '/admin/exams', icon: FileSpreadsheet },
-        { label: 'Question Taxonomy', path: '/admin/questions', icon: HelpCircle },
+        {
+          label: 'Candidate Portal (USN)',
+          path: '/login?role=student',
+          icon: GraduationCap,
+        },
+        {
+          label: 'Institution Admin Login',
+          path: '/login?role=admin',
+          icon: Building,
+        },
+        {
+          label: 'Super Admin Login',
+          path: '/login?role=super-admin',
+          icon: ShieldCheck,
+        },
       ],
     },
     {
@@ -35,6 +53,14 @@ export default function Sidebar({ isOpen, onClose }) {
           icon: Sparkles,
           isHighlight: true,
         },
+      ],
+    },
+    {
+      title: 'Examination Management',
+      items: [
+        { label: 'Admin Overview', path: '/admin', icon: LayoutDashboard },
+        { label: 'Assessment Rosters', path: '/admin/exams', icon: FileSpreadsheet },
+        { label: 'Question Taxonomy', path: '/admin/questions', icon: HelpCircle },
       ],
     },
     {
@@ -89,16 +115,28 @@ export default function Sidebar({ isOpen, onClose }) {
           </button>
         </div>
 
-        {/* System Health / Academic Session Status Pill */}
-        <div className="px-4 py-3 mx-3 mt-3 rounded border border-slate-200/80 bg-slate-50">
+        {/* System Health / Auth State Status Pill */}
+        <div className="px-4 py-2.5 mx-3 mt-3 rounded border border-slate-200/80 bg-slate-50">
           <div className="flex items-center justify-between text-[11px]">
-            <span className="font-semibold text-slate-600">Secure CBT Engine</span>
-            <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              Active
+            <span className="font-semibold text-slate-700">
+              {isAuthenticated ? user?.role?.toUpperCase() : 'Guest Session'}
+            </span>
+            <span
+              className={`inline-flex items-center gap-1 font-medium ${
+                isAuthenticated ? 'text-emerald-700' : 'text-slate-500'
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  isAuthenticated ? 'bg-emerald-500' : 'bg-slate-400'
+                }`}
+              />
+              {isAuthenticated ? 'Authenticated' : 'Login Required'}
             </span>
           </div>
-          <p className="text-[10px] text-slate-400 font-mono mt-0.5">Build v1.0.0-PROD</p>
+          <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+            {isAuthenticated ? user?.identifier || user?.email : 'No active JWT'}
+          </p>
         </div>
 
         {/* Sidebar Navigation */}
@@ -111,7 +149,9 @@ export default function Sidebar({ isOpen, onClose }) {
 
               {section.items.map((item) => {
                 const Icon = item.icon;
-                const isActive = location.pathname === item.path;
+                const isExactActive =
+                  location.pathname + location.search === item.path ||
+                  location.pathname === item.path;
 
                 return (
                   <NavLink
@@ -119,7 +159,7 @@ export default function Sidebar({ isOpen, onClose }) {
                     to={item.path}
                     onClick={onClose}
                     className={`flex items-center justify-between rounded px-2.5 py-1.5 text-xs font-medium transition ${
-                      isActive
+                      isExactActive
                         ? 'bg-[#1E3A5F] text-white shadow-xs'
                         : item.isHighlight
                         ? 'text-[#1E3A5F] bg-[#EBF2FA] hover:bg-[#D9E6F5]'
@@ -130,7 +170,7 @@ export default function Sidebar({ isOpen, onClose }) {
                       {Icon && <Icon className="h-4 w-4 shrink-0" />}
                       <span>{item.label}</span>
                     </div>
-                    {item.isHighlight && !isActive && (
+                    {item.isHighlight && !isExactActive && (
                       <span className="text-[10px] bg-white text-[#1E3A5F] px-1.5 py-0.5 rounded border border-[#BFDBFE] font-semibold">
                         Preview
                       </span>
@@ -142,12 +182,26 @@ export default function Sidebar({ isOpen, onClose }) {
           ))}
         </div>
 
-        {/* Institutional Identity Footer */}
+        {/* Institutional Identity Footer & Session Logout */}
         <div className="border-t border-slate-200 p-3 bg-slate-50/50">
-          <div className="flex items-center justify-between text-[11px] text-slate-500">
-            <span>University Examination ERP</span>
-            <span className="font-mono text-[10px]">ISO 27001</span>
-          </div>
+          {isAuthenticated ? (
+            <button
+              type="button"
+              onClick={logout}
+              className="w-full flex items-center justify-between text-xs text-rose-600 hover:bg-rose-50 px-2 py-1.5 rounded transition font-medium"
+            >
+              <span className="flex items-center gap-2">
+                <LogOut className="w-3.5 h-3.5" />
+                Sign Out Session
+              </span>
+              <span className="text-[10px] text-rose-400">Exit</span>
+            </button>
+          ) : (
+            <div className="flex items-center justify-between text-[11px] text-slate-500">
+              <span>University Examination ERP</span>
+              <span className="font-mono text-[10px]">ISO 27001</span>
+            </div>
+          )}
         </div>
       </aside>
     </>

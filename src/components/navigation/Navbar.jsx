@@ -1,10 +1,28 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { Menu, Bell, Search, ShieldCheck, User, Sparkles } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Menu, Bell, Search, ShieldCheck, User, Sparkles, LogOut, LogIn } from 'lucide-react';
 import Badge from '../common/Badge';
+import { useAuth } from '../../context/AuthContext';
 
 export default function Navbar({ onToggleSidebar, activeRoleConfig }) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, isAuthenticated, logout } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  const getInitials = (name) => {
+    if (!name) return 'EX';
+    return name
+      .split(' ')
+      .map((part) => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+  };
 
   return (
     <header className="sticky top-0 z-30 flex h-14 w-full items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6">
@@ -47,7 +65,7 @@ export default function Navbar({ onToggleSidebar, activeRoleConfig }) {
 
       {/* Right: Actions, Showcase Link, User Profile */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Design System Showcase Link Pill */}
+        {/* Design System Showcase Link */}
         <Link
           to="/design-system"
           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium border transition ${
@@ -74,16 +92,39 @@ export default function Navbar({ onToggleSidebar, activeRoleConfig }) {
         {/* Separator */}
         <div className="h-5 w-px bg-slate-200" />
 
-        {/* User Identity */}
-        <div className="flex items-center gap-2 pl-1">
-          <div className="flex h-7 w-7 items-center justify-center rounded bg-[#1E3A5F] text-white font-semibold text-xs shadow-xs">
-            EC
+        {/* User Identity or Sign In Link */}
+        {isAuthenticated ? (
+          <div className="flex items-center gap-2 pl-1">
+            <div className="flex h-7 w-7 items-center justify-center rounded bg-[#1E3A5F] text-white font-semibold text-xs shadow-xs">
+              {getInitials(user?.name || user?.identifier)}
+            </div>
+            <div className="hidden md:block text-left leading-tight">
+              <p className="text-xs font-semibold text-slate-800">
+                {user?.name || user?.identifier || 'User'}
+              </p>
+              <p className="text-[10px] text-slate-500 uppercase font-mono">
+                {user?.role || 'Session'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="p-1.5 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 transition"
+              title="Sign Out"
+              aria-label="Sign Out"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </button>
           </div>
-          <div className="hidden md:block text-left leading-tight">
-            <p className="text-xs font-semibold text-slate-800">Exam Controller</p>
-            <p className="text-[10px] text-slate-500 font-mono">ID: ERP-9042</p>
-          </div>
-        </div>
+        ) : (
+          <Link
+            to="/login"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold bg-[#1E3A5F] text-white hover:bg-[#152A45] px-3 py-1.5 rounded transition shadow-xs"
+          >
+            <LogIn className="h-3.5 w-3.5" />
+            <span>Sign In</span>
+          </Link>
+        )}
       </div>
     </header>
   );

@@ -3,7 +3,7 @@ import { AlertCircle } from 'lucide-react';
 
 /**
  * Enterprise Form Input Field
- * Features label, helper caption, validation error styling, and prefix/suffix slot.
+ * Features label, helper caption, validation error styling, prefix icon, and interactive/static suffix slots.
  */
 const InputField = forwardRef(function InputField(
   {
@@ -21,6 +21,7 @@ const InputField = forwardRef(function InputField(
     disabled = false,
     prefixIcon: PrefixIcon,
     suffixIcon: SuffixIcon,
+    suffixButton,
     className = '',
     inputClassName = '',
     ...props
@@ -61,7 +62,7 @@ const InputField = forwardRef(function InputField(
           required={required}
           className={`w-full rounded border bg-white py-2 text-xs text-slate-900 transition-colors placeholder:text-slate-400 focus:outline-none focus:ring-1 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed ${
             PrefixIcon ? 'pl-9' : 'pl-3'
-          } ${SuffixIcon || error ? 'pr-9' : 'pr-3'} ${
+          } ${suffixButton || SuffixIcon || error ? 'pr-10' : 'pr-3'} ${
             error
               ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/30'
               : 'border-slate-300 focus:border-[#1E3A5F] focus:ring-[#1E3A5F]'
@@ -72,6 +73,10 @@ const InputField = forwardRef(function InputField(
         {error ? (
           <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-rose-500">
             <AlertCircle className="h-4 w-4" />
+          </div>
+        ) : suffixButton ? (
+          <div className="absolute inset-y-0 right-0 flex items-center pr-2.5">
+            {suffixButton}
           </div>
         ) : SuffixIcon ? (
           <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400">
