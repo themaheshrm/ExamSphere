@@ -175,7 +175,7 @@ export default function ForgotPasswordPage() {
 
                   <InputField
                     label="University Seat Number (USN)"
-                    placeholder="e.g. 1MS22CS042"
+                    placeholder="e.g. 1DA22CS001"
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value.toUpperCase())}
                     prefixIcon={GraduationCap}

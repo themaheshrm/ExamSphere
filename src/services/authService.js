@@ -4,10 +4,10 @@
  *
  * Security invariants:
  *   - Role is NEVER accepted from client input or fallback defaults.
- *   - A missing or unreadable profile row rejects the login.
- *   - USN and Admin ID resolution queries the profiles table, not a hardcoded map.
- *   - Supabase session is the only token — no parallel localStorage copies.
- *   - No demo credentials or 1-click bypass exist in this module.
+ *   - A missing, unreadable, or mismatched profile row rejects the login and immediately signs out.
+ *   - USN and Admin ID resolution queries via a secure server-side RPC (no table scanning/enumeration).
+ *   - Constant-generic responses for authentication and password reset to eliminate account enumeration.
+ *   - Supabase session is the single source of truth — no duplicate storage.
  */
 
 import { supabase } from './supabase';
@@ -53,7 +53,7 @@ export async function fetchVerifiedProfile(userId) {
 
   if (error || !profile) {
     throw new Error(
-      'Your account does not have a valid profile. Contact your institution administrator.'
+      'Your account does not have a verified institutional profile. Contact your administration.'
     );
   }
 
@@ -87,150 +87,130 @@ export function buildUserObject(authUser, profile, role) {
 // ─── Identifier resolution ──────────────────────────────────────────────────
 
 /**
- * Resolves a student USN to the auth email by querying the profile_email_lookup view.
- * Falls back to treating the identifier as a direct email if it already contains '@'.
- *
- * The view is accessible to anon (pre-auth) and exposes only usn/staff_id/email.
- * If the view does not exist yet (migration not run), the student must use their email.
+ * Resolves an identifier (USN, Staff ID, or Email) to an auth email via secure RPC.
+ * Does not expose tables or views to anonymous scanning.
+ * Returns null if resolution fails, avoiding detailed error leaks.
  */
-async function resolveStudentIdentifier(identifier) {
+async function resolveIdentifierToEmail(identifier, role) {
   const trimmed = identifier.trim();
 
-  // Already an email — use it directly.
+  // If already an email, return directly
   if (trimmed.includes('@')) {
     return trimmed.toLowerCase();
   }
 
-  // Query the lookup view for a matching USN
-  const { data, error } = await supabase
-    .from('profile_email_lookup')
-    .select('email')
-    .ilike('usn', trimmed)
-    .single();
+  try {
+    const { data: email, error } = await supabase.rpc('resolve_login_identifier', {
+      p_identifier: trimmed,
+      p_role: role,
+    });
 
-  if (error || !data?.email) {
-    throw new Error(
-      `No account found for USN "${trimmed.toUpperCase()}". Verify your USN or use your registered email to sign in.`
-    );
+    if (error || !email) {
+      return null;
+    }
+
+    return email.toLowerCase();
+  } catch {
+    return null;
   }
-
-  return data.email.toLowerCase();
-}
-
-/**
- * Resolves an admin identifier (staff ID or email) to the auth email.
- * If the identifier contains '@', it is treated as an email directly.
- * Otherwise queries the profile_email_lookup view for a matching staff_id.
- */
-async function resolveAdminIdentifier(identifier) {
-  const trimmed = identifier.trim();
-
-  if (trimmed.includes('@')) {
-    return trimmed.toLowerCase();
-  }
-
-  // Query the lookup view for a matching staff_id
-  const { data, error } = await supabase
-    .from('profile_email_lookup')
-    .select('email')
-    .ilike('staff_id', trimmed)
-    .single();
-
-  if (error || !data?.email) {
-    throw new Error(
-      `No staff account found for ID "${trimmed}". Verify your Staff ID or use your official email to sign in.`
-    );
-  }
-
-  return data.email.toLowerCase();
-}
-
-/**
- * Resolves a super-admin identifier to an email.
- * Super admins must always use their email — no alternative ID scheme.
- */
-function resolveSuperAdminIdentifier(identifier) {
-  const trimmed = identifier.trim();
-  if (!trimmed.includes('@')) {
-    throw new Error('Super Admin login requires a valid email address.');
-  }
-  return trimmed.toLowerCase();
 }
 
 // ─── Public auth service ────────────────────────────────────────────────────
 export const authService = {
   /**
    * Resolves any identifier to an auth email based on the login-form role context.
-   * The role param is used ONLY for identifier resolution — never for authorization.
    */
   async resolveEmail(identifier, role) {
-    switch (role) {
-      case USER_ROLES.STUDENT:
-        return resolveStudentIdentifier(identifier);
-      case USER_ROLES.ADMIN:
-        return resolveAdminIdentifier(identifier);
-      case USER_ROLES.SUPER_ADMIN:
-        return resolveSuperAdminIdentifier(identifier);
-      default:
-        throw new Error('Invalid login context.');
-    }
+    return resolveIdentifierToEmail(identifier, role);
   },
 
   /**
    * Authenticates against Supabase Auth, then fetches and validates the
-   * database profile. Rejects immediately if the profile is missing or
-   * the role is invalid.
+   * database profile.
+   *
+   * SECURITY ENFORCEMENT:
+   * If post-login verification fails (missing profile, invalid role, or portal
+   * role mismatch), it IMMEDIATELY signs out of Supabase to prevent orphaned sessions.
    *
    * Returns { user, redirectTo } on success.
-   * Throws on any failure.
+   * Throws generic 'Invalid login credentials.' on auth failure to prevent user enumeration.
    */
   async login({ identifier, password, role }) {
-    // 1. Resolve the identifier to an email (may query DB for USN/staff_id)
+    // 1. Resolve identifier to an email
     const email = await this.resolveEmail(identifier, role);
+
+    if (!email) {
+      // Generic error prevents attackers from probing which USNs or Staff IDs exist
+      throw new Error('Invalid login credentials.');
+    }
 
     // 2. Authenticate with Supabase Auth
     const { data: authData, error: authError } =
       await supabase.auth.signInWithPassword({ email, password });
 
-    if (authError) {
-      throw new Error(authError.message || 'Invalid login credentials.');
+    if (authError || !authData?.user) {
+      throw new Error('Invalid login credentials.');
     }
 
-    if (!authData.session?.access_token) {
-      throw new Error('Authentication succeeded but no session was created.');
+    // 3. Post-login verification guard
+    // If ANY check fails here, signOut immediately so no token/cookie lingers
+    try {
+      if (!authData.session?.access_token) {
+        throw new Error('Session establishment failed.');
+      }
+
+      // Fetch verified role from PostgreSQL profiles
+      const { profile, role: verifiedRole } = await fetchVerifiedProfile(
+        authData.user.id
+      );
+
+      // Verify account role matches the portal being logged into
+      if (role && verifiedRole !== role) {
+        throw new Error(
+          `Access restricted: Your account does not have permission to access the ${role} portal.`
+        );
+      }
+
+      const user = buildUserObject(authData.user, profile, verifiedRole);
+
+      return {
+        user,
+        redirectTo: getRouteForRole(verifiedRole),
+      };
+    } catch (verificationError) {
+      // CRITICAL: Purge the session immediately on any verification failure
+      await supabase.auth.signOut().catch(() => {});
+      throw verificationError;
     }
-
-    // 3. Fetch and validate the database profile (role comes ONLY from here)
-    const { profile, role: verifiedRole } = await fetchVerifiedProfile(
-      authData.user.id
-    );
-
-    // 4. Build the canonical user object
-    const user = buildUserObject(authData.user, profile, verifiedRole);
-
-    return {
-      user,
-      redirectTo: getRouteForRole(verifiedRole),
-    };
   },
 
   /**
    * Request password reset via Supabase Auth.
+   *
+   * OWASP ENFORCEMENT:
+   * Always returns a constant generic message without exposing account existence
+   * or the user's private email address.
    */
   async requestPasswordReset({ identifier, role }) {
-    const email = await this.resolveEmail(identifier, role);
+    const genericResponse = {
+      success: true,
+      message:
+        'If an active account is associated with this identifier, password recovery instructions have been dispatched to the registered institutional address.',
+    };
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/login`,
-    });
+    try {
+      const email = await this.resolveEmail(identifier, role);
 
-    if (error) {
-      throw new Error(error.message);
+      if (email) {
+        await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/login`,
+        });
+      }
+    } catch (err) {
+      // Suppress specific error details to prevent user enumeration
+      console.warn('Password recovery processed with masked response:', err.message);
     }
 
-    return {
-      success: true,
-      message: `Password reset instructions have been sent to ${email}.`,
-    };
+    return genericResponse;
   },
 };

@@ -1,44 +1,81 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+} from 'react';
 import { supabase } from '../services/supabase';
 import {
   authService,
   fetchVerifiedProfile,
   buildUserObject,
-  getRouteForRole,
 } from '../services/authService';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  // Session state — starts null; populated ONLY after Supabase verification.
+  // Session state — starts null; populated ONLY after Supabase profile verification.
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Synchronization refs to prevent race conditions and duplicate hydrations
+  const activeUserIdRef = useRef(null);
+  const hydrationSequenceRef = useRef(0);
+  const isInitializingRef = useRef(true);
+
   /**
-   * Rehydrates user state from a live Supabase session + verified profile.
-   * If the profile is missing or invalid, the session is forcibly signed out.
+   * Rehydrates user state from a live Supabase session + verified database profile.
+   * Employs sequence tokening and active-user caching to eliminate race conditions.
    */
-  const hydrateFromSession = useCallback(async (session) => {
+  const hydrateFromSession = useCallback(async (session, options = {}) => {
+    const { force = false } = options;
+    const currentSeq = ++hydrationSequenceRef.current;
+
     if (!session?.user) {
+      activeUserIdRef.current = null;
       setUser(null);
       return;
     }
 
+    const userId = session.user.id;
+
+    // Deduplication: If already verified and hydrated for this user ID, avoid redundant DB trips
+    if (!force && activeUserIdRef.current === userId) {
+      return;
+    }
+
     try {
-      const { profile, role } = await fetchVerifiedProfile(session.user.id);
+      const { profile, role } = await fetchVerifiedProfile(userId);
+
+      // Discard stale out-of-order resolution if a newer hydration started
+      if (currentSeq !== hydrationSequenceRef.current) {
+        return;
+      }
+
+      activeUserIdRef.current = userId;
       setUser(buildUserObject(session.user, profile, role));
-    } catch {
-      // Profile missing or role invalid — destroy the orphaned Supabase session.
+    } catch (err) {
+      // Discard stale resolution
+      if (currentSeq !== hydrationSequenceRef.current) {
+        return;
+      }
+
+      // CRITICAL: Profile missing, invalid, or query failed. Terminate orphaned session immediately.
+      activeUserIdRef.current = null;
       await supabase.auth.signOut().catch(() => {});
       setUser(null);
+      setError(err.message || 'Session verification failed.');
     }
   }, []);
 
-  // ── Mount: verify existing Supabase session ──────────────────────────────
+  // ── Unified Session Mount & Auth Listener ────────────────────────────────
   useEffect(() => {
     let isMounted = true;
 
+    // 1. Initial session check on mount
     async function initSession() {
       try {
         const {
@@ -47,7 +84,7 @@ export function AuthProvider({ children }) {
         } = await supabase.auth.getSession();
 
         if (sessionError) {
-          console.warn('Session check error:', sessionError.message);
+          console.warn('Session check notice:', sessionError.message);
         }
 
         if (isMounted) {
@@ -55,24 +92,38 @@ export function AuthProvider({ children }) {
         }
       } catch (err) {
         console.error('Auth initialization error:', err);
-        if (isMounted) setUser(null);
+        if (isMounted) {
+          activeUserIdRef.current = null;
+          setUser(null);
+        }
       } finally {
-        if (isMounted) setIsLoading(false);
+        if (isMounted) {
+          isInitializingRef.current = false;
+          setIsLoading(false);
+        }
       }
     }
 
     initSession();
 
-    // ── Live auth state listener ────────────────────────────────────────────
+    // 2. Auth State Change Listener
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!isMounted) return;
 
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+      if (event === 'SIGNED_IN') {
+        // Hydrate only if not already hydrated during this login cycle
         await hydrateFromSession(session);
+      } else if (event === 'TOKEN_REFRESHED') {
+        // Token refreshed: User and profile identity remain identical; skip re-querying the DB
+        if (session?.user?.id !== activeUserIdRef.current) {
+          await hydrateFromSession(session, { force: true });
+        }
       } else if (event === 'SIGNED_OUT') {
+        activeUserIdRef.current = null;
         setUser(null);
+        setError(null);
       }
     });
 
@@ -82,7 +133,7 @@ export function AuthProvider({ children }) {
     };
   }, [hydrateFromSession]);
 
-  // ── Login ─────────────────────────────────────────────────────────────────
+  // ── Login Handler ─────────────────────────────────────────────────────────
   const login = useCallback(async ({ identifier, password, role }) => {
     setIsLoading(true);
     setError(null);
@@ -90,10 +141,15 @@ export function AuthProvider({ children }) {
     try {
       const result = await authService.login({ identifier, password, role });
 
-      // onAuthStateChange will hydrate the user; set here for immediate redirect.
+      // Pre-set activeUserIdRef so the incoming onAuthStateChange(SIGNED_IN)
+      // will not trigger an expensive and redundant duplicate profile fetch
+      activeUserIdRef.current = result.user.id;
       setUser(result.user);
+
       return { success: true, user: result.user, redirectTo: result.redirectTo };
     } catch (err) {
+      activeUserIdRef.current = null;
+      setUser(null);
       const message = err.message || 'An error occurred during authentication.';
       setError(message);
       return { success: false, error: message };
@@ -102,15 +158,17 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // ── Logout ────────────────────────────────────────────────────────────────
+  // ── Logout Handler ────────────────────────────────────────────────────────
   const logout = useCallback(async () => {
     setIsLoading(true);
+    activeUserIdRef.current = null;
+
     try {
       await supabase.auth.signOut();
     } catch (e) {
-      console.warn('Sign out warning:', e.message);
+      console.warn('Sign out notice:', e.message);
     } finally {
-      // Always clear client state regardless of server response.
+      // Synchronously wipe state regardless of network response
       setUser(null);
       setError(null);
       setIsLoading(false);
@@ -120,7 +178,7 @@ export function AuthProvider({ children }) {
   // ── Clear error ───────────────────────────────────────────────────────────
   const clearError = useCallback(() => setError(null), []);
 
-  // ── Context value ─────────────────────────────────────────────────────────
+  // ── Context Value ─────────────────────────────────────────────────────────
   const value = {
     user,
     role: user?.role ?? null,
