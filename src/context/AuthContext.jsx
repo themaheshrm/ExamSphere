@@ -1,41 +1,114 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { authService } from '../services/authService';
+import { supabase } from '../services/supabase';
+import { authService, normalizeRole, DEMO_CREDENTIALS } from '../services/authService';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => authService.getUser());
   const [token, setToken] = useState(() => authService.getToken());
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Sync token state on startup
+  // Sync Supabase live session and profiles on mount
   useEffect(() => {
-    const savedToken = authService.getToken();
-    const savedUser = authService.getUser();
-    if (savedToken && savedUser) {
-      setToken(savedToken);
-      setUser(savedUser);
+    let isMounted = true;
+
+    async function initSession() {
+      try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError) {
+          console.warn('Session check error:', sessionError);
+        }
+
+        if (session && session.user) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+
+          if (isMounted) {
+            const role = normalizeRole(profile?.role || 'student');
+            const currentUser = {
+              id: session.user.id,
+              name: profile?.full_name || session.user.email?.split('@')[0],
+              email: session.user.email,
+              identifier: profile?.usn || session.user.email,
+              usn: profile?.usn || null,
+              role,
+              institution_id: profile?.institution_id || null,
+              institution: profile?.institution_id ? 'Apex Engineering University (Dr. AIT)' : 'ExamSphere Global Cloud',
+            };
+
+            setUser(currentUser);
+            setToken(session.access_token);
+            authService.setUser(currentUser);
+            authService.setToken(session.access_token);
+          }
+        }
+      } catch (err) {
+        console.error('Auth initialization error:', err);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
     }
+
+    initSession();
+
+    // Subscribe to live Supabase auth state transitions
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+
+        const role = normalizeRole(profile?.role || 'student');
+        const currentUser = {
+          id: session.user.id,
+          name: profile?.full_name || session.user.email?.split('@')[0],
+          email: session.user.email,
+          identifier: profile?.usn || session.user.email,
+          usn: profile?.usn || null,
+          role,
+          institution_id: profile?.institution_id || null,
+          institution: profile?.institution_id ? 'Apex Engineering University (Dr. AIT)' : 'ExamSphere Global Cloud',
+        };
+
+        setUser(currentUser);
+        setToken(session.access_token);
+        authService.setUser(currentUser);
+        authService.setToken(session.access_token);
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setToken(null);
+        authService.clearSession();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription?.unsubscribe();
+    };
   }, []);
 
   /**
-   * Primary login handler
+   * Primary login handler (Live Supabase Auth)
    */
   const login = async ({ identifier, password, role, remember = false }) => {
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await authService.login({ identifier, password, role });
+      const response = await authService.login({ identifier, password, role, remember });
 
-      // When backend returns { token, user }:
       if (response && response.token && response.user) {
-        authService.setToken(response.token, remember);
-        authService.setUser(response.user, remember);
         setToken(response.token);
         setUser(response.user);
-        return { success: true, user: response.user };
+        return { success: true, user: response.user, redirectTo: response.redirectTo };
       }
 
       return { success: false };
@@ -49,9 +122,40 @@ export function AuthProvider({ children }) {
   };
 
   /**
-   * Logout handler
+   * 1-Click Live Login handler
    */
-  const logout = () => {
+  const demoLogin = async (role) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await authService.demoLogin(role);
+
+      if (response && response.token && response.user) {
+        setToken(response.token);
+        setUser(response.user);
+        return { success: true, user: response.user, redirectTo: response.redirectTo };
+      }
+
+      return { success: false };
+    } catch (err) {
+      const message = err.message || 'Failed to initialize session.';
+      setError(message);
+      return { success: false, error: message };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Logout handler with live Supabase sign out
+   */
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('Sign out warning:', e);
+    }
     authService.clearSession();
     setToken(null);
     setUser(null);
@@ -62,16 +166,6 @@ export function AuthProvider({ children }) {
     setError(null);
   };
 
-  /**
-   * Developer / QA verification helper (for offline UI testing only)
-   */
-  const setDevSession = (devUser, devToken = 'dev-jwt-placeholder-token') => {
-    authService.setToken(devToken);
-    authService.setUser(devUser);
-    setToken(devToken);
-    setUser(devUser);
-  };
-
   const value = {
     user,
     token,
@@ -80,9 +174,10 @@ export function AuthProvider({ children }) {
     isLoading,
     error,
     login,
+    demoLogin,
     logout,
     clearError,
-    setDevSession,
+    demoCredentials: DEMO_CREDENTIALS,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

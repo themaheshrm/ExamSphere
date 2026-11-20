@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, ShieldCheck, AlertCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Mail, Lock, Eye, EyeOff, ShieldCheck, AlertCircle, Zap, Copy } from 'lucide-react';
 import InputField from '../../components/common/InputField';
 import Button from '../../components/common/Button';
 import { useAuth } from '../../context/AuthContext';
 import { USER_ROLES } from '../../utils/constants';
 
 export default function SuperAdminLoginForm({ onForgotPassword }) {
-  const { login, isLoading, error, clearError } = useAuth();
+  const navigate = useNavigate();
+  const { login, demoLogin, demoCredentials, isLoading, error, clearError } = useAuth();
+
+  const superAdminDemo = demoCredentials[USER_ROLES.SUPER_ADMIN];
 
   const [formData, setFormData] = useState({
     email: '',
@@ -17,6 +20,24 @@ export default function SuperAdminLoginForm({ onForgotPassword }) {
 
   const [showPassword, setShowPassword] = useState(false);
   const [formErrors, setFormErrors] = useState({});
+
+  const handleQuickFill = () => {
+    setFormData({
+      email: superAdminDemo.identifier,
+      password: superAdminDemo.password,
+      remember: true,
+    });
+    setFormErrors({});
+    clearError();
+  };
+
+  const handleDirectDemoLogin = async () => {
+    clearError();
+    const result = await demoLogin(USER_ROLES.SUPER_ADMIN);
+    if (result.success) {
+      navigate('/super-admin');
+    }
+  };
 
   const validate = () => {
     const errors = {};
@@ -44,22 +65,47 @@ export default function SuperAdminLoginForm({ onForgotPassword }) {
 
     if (!validate()) return;
 
-    await login({
+    const result = await login({
       identifier: formData.email,
       password: formData.password,
       role: USER_ROLES.SUPER_ADMIN,
       remember: formData.remember,
     });
+
+    if (result.success) {
+      navigate(result.redirectTo || '/super-admin');
+    }
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+      {/* Demo Credentials Helper Pill */}
+      <div className="p-3 rounded border border-purple-200 bg-purple-50/70 text-xs">
+        <div className="flex items-center justify-between pb-1.5 border-b border-purple-200/60 mb-2">
+          <span className="font-semibold text-purple-900 flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5 text-purple-600" />
+            Super Admin Demo Credentials
+          </span>
+          <button
+            type="button"
+            onClick={handleQuickFill}
+            className="text-[11px] font-semibold text-purple-700 hover:text-purple-900 hover:underline"
+          >
+            Auto Fill Form
+          </button>
+        </div>
+        <div className="font-mono text-[11px] text-purple-900 space-y-0.5">
+          <p>Email: <span className="font-bold">{superAdminDemo.identifier}</span></p>
+          <p>Password: <span className="font-bold">{superAdminDemo.password}</span></p>
+        </div>
+      </div>
+
       {/* Error Banner */}
       {error && (
         <div className="flex items-start gap-2.5 p-3 rounded border border-rose-200 bg-rose-50 text-rose-800 text-xs">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
           <div className="flex-1">
-            <p className="font-semibold">Authentication Blocked</p>
+            <p className="font-semibold">Authentication Error</p>
             <p className="mt-0.5 text-[11px] leading-relaxed">{error}</p>
           </div>
         </div>
@@ -77,7 +123,7 @@ export default function SuperAdminLoginForm({ onForgotPassword }) {
         }}
         prefixIcon={Mail}
         error={formErrors.email}
-        helperText="Authorized enterprise platform administrators only"
+        helperText="Super Admin master console access"
         disabled={isLoading}
         required
       />
@@ -131,20 +177,33 @@ export default function SuperAdminLoginForm({ onForgotPassword }) {
         </button>
       </div>
 
-      {/* Submit Button */}
-      <Button
-        type="submit"
-        variant="primary"
-        size="lg"
-        className="w-full mt-2"
-        isLoading={isLoading}
-        icon={ShieldCheck}
-      >
-        Sign In to Super Admin Console
-      </Button>
+      {/* Buttons */}
+      <div className="space-y-2 pt-2">
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          className="w-full"
+          isLoading={isLoading}
+          icon={ShieldCheck}
+        >
+          Sign In to Super Admin Console
+        </Button>
 
-      {/* Security notice */}
-      <p className="text-[11px] text-slate-400 text-center pt-2">
+        <Button
+          type="button"
+          variant="secondary"
+          size="md"
+          className="w-full text-purple-700 hover:bg-purple-50 border-purple-200"
+          onClick={handleDirectDemoLogin}
+          isLoading={isLoading}
+          icon={Zap}
+        >
+          1-Click Demo Login as Super Admin
+        </Button>
+      </div>
+
+      <p className="text-[11px] text-slate-400 text-center pt-1">
         Protected by hardware-bound audit logs & rate-limiting policies.
       </p>
     </form>

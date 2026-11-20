@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
-import { UserCheck, Lock, Eye, EyeOff, Building, AlertCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { UserCheck, Lock, Eye, EyeOff, Building, AlertCircle, Zap } from 'lucide-react';
 import InputField from '../../components/common/InputField';
 import Button from '../../components/common/Button';
 import { useAuth } from '../../context/AuthContext';
 import { USER_ROLES } from '../../utils/constants';
 
 export default function AdminLoginForm({ onForgotPassword }) {
-  const { login, isLoading, error, clearError } = useAuth();
+  const navigate = useNavigate();
+  const { login, demoLogin, demoCredentials, isLoading, error, clearError } = useAuth();
+
+  const adminDemo = demoCredentials[USER_ROLES.ADMIN];
 
   const [formData, setFormData] = useState({
     identifier: '',
@@ -17,6 +21,24 @@ export default function AdminLoginForm({ onForgotPassword }) {
   const [showPassword, setShowPassword] = useState(false);
   const [formErrors, setFormErrors] = useState({});
 
+  const handleQuickFill = () => {
+    setFormData({
+      identifier: adminDemo.identifier,
+      password: adminDemo.password,
+      remember: true,
+    });
+    setFormErrors({});
+    clearError();
+  };
+
+  const handleDirectDemoLogin = async () => {
+    clearError();
+    const result = await demoLogin(USER_ROLES.ADMIN);
+    if (result.success) {
+      navigate('/admin');
+    }
+  };
+
   const validate = () => {
     const errors = {};
     const val = formData.identifier.trim();
@@ -24,7 +46,7 @@ export default function AdminLoginForm({ onForgotPassword }) {
     if (!val) {
       errors.identifier = 'Institution Admin ID or Email is required';
     } else if (val.length < 3) {
-      errors.identifier = 'Enter a valid staff ID (e.g., ADM-8902) or official email';
+      errors.identifier = 'Enter a valid staff ID (e.g., ADM-8942) or official email';
     }
 
     if (!formData.password) {
@@ -43,16 +65,41 @@ export default function AdminLoginForm({ onForgotPassword }) {
 
     if (!validate()) return;
 
-    await login({
+    const result = await login({
       identifier: formData.identifier,
       password: formData.password,
       role: USER_ROLES.ADMIN,
       remember: formData.remember,
     });
+
+    if (result.success) {
+      navigate(result.redirectTo || '/admin');
+    }
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+      {/* Demo Credentials Helper Pill */}
+      <div className="p-3 rounded border border-blue-200 bg-blue-50/70 text-xs">
+        <div className="flex items-center justify-between pb-1.5 border-b border-blue-200/60 mb-2">
+          <span className="font-semibold text-[#1E3A5F] flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5 text-blue-600" />
+            Institution Admin Demo Credentials
+          </span>
+          <button
+            type="button"
+            onClick={handleQuickFill}
+            className="text-[11px] font-semibold text-blue-700 hover:text-blue-900 hover:underline"
+          >
+            Auto Fill Form
+          </button>
+        </div>
+        <div className="font-mono text-[11px] text-blue-900 space-y-0.5">
+          <p>Admin ID: <span className="font-bold">{adminDemo.identifier}</span></p>
+          <p>Password: <span className="font-bold">{adminDemo.password}</span></p>
+        </div>
+      </div>
+
       {/* Error Banner */}
       {error && (
         <div className="flex items-start gap-2.5 p-3 rounded border border-rose-200 bg-rose-50 text-rose-800 text-xs">
@@ -68,7 +115,7 @@ export default function AdminLoginForm({ onForgotPassword }) {
       <InputField
         label="Admin Staff ID or Official Email"
         type="text"
-        placeholder="e.g. ADM-8942 or controller@university.edu"
+        placeholder="e.g. admin@drait.edu.in"
         value={formData.identifier}
         onChange={(e) => {
           setFormData({ ...formData, identifier: e.target.value });
@@ -130,20 +177,33 @@ export default function AdminLoginForm({ onForgotPassword }) {
         </button>
       </div>
 
-      {/* Submit Button */}
-      <Button
-        type="submit"
-        variant="primary"
-        size="lg"
-        className="w-full mt-2"
-        isLoading={isLoading}
-        icon={Building}
-      >
-        Sign In to Examination Center
-      </Button>
+      {/* Buttons */}
+      <div className="space-y-2 pt-2">
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          className="w-full"
+          isLoading={isLoading}
+          icon={Building}
+        >
+          Sign In to Examination Center
+        </Button>
 
-      {/* Institutional advisory */}
-      <p className="text-[11px] text-slate-400 text-center pt-2">
+        <Button
+          type="button"
+          variant="secondary"
+          size="md"
+          className="w-full text-blue-700 hover:bg-blue-50 border-blue-200"
+          onClick={handleDirectDemoLogin}
+          isLoading={isLoading}
+          icon={Zap}
+        >
+          1-Click Demo Login as Institution Admin
+        </Button>
+      </div>
+
+      <p className="text-[11px] text-slate-400 text-center pt-1">
         Restricted to authorized Controller of Examinations (COE) and invigilation staff.
       </p>
     </form>

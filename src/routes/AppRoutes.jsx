@@ -11,6 +11,7 @@ import QuestionBankPage from '../pages/admin/QuestionBankPage';
 import SuperAdminDashboard from '../pages/super-admin/SuperAdminDashboard';
 import OrganizationsPage from '../pages/super-admin/OrganizationsPage';
 import SystemSettingsPage from '../pages/super-admin/SystemSettingsPage';
+import StudentDashboard from '../pages/student/StudentDashboard';
 import { USER_ROLES } from '../utils/constants';
 
 export default function AppRoutes() {
@@ -28,6 +29,17 @@ export default function AppRoutes() {
 
           {/* Design System Specification & Showcase (Public for UI verification) */}
           <Route path="design-system" element={<ComponentShowcase />} />
+
+          {/* Protected Student Portal Route */}
+          <Route
+            element={
+              <ProtectedRoute
+                allowedRoles={[USER_ROLES.STUDENT, USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN]}
+              />
+            }
+          >
+            <Route path="student" element={<StudentDashboard />} />
+          </Route>
 
           {/* Protected Institution Admin Routes */}
           <Route

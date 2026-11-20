@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink, Link, useLocation } from 'react-router-dom';
+import { NavLink, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   X,
   Layers,
@@ -21,7 +21,13 @@ import { USER_ROLES } from '../../utils/constants';
 
 export default function Sidebar({ isOpen, onClose }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const { user, isAuthenticated, logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
 
   const navigationSections = [
     {
@@ -187,7 +193,7 @@ export default function Sidebar({ isOpen, onClose }) {
           {isAuthenticated ? (
             <button
               type="button"
-              onClick={logout}
+              onClick={handleLogout}
               className="w-full flex items-center justify-between text-xs text-rose-600 hover:bg-rose-50 px-2 py-1.5 rounded transition font-medium"
             >
               <span className="flex items-center gap-2">

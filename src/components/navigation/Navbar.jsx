@@ -9,8 +9,8 @@ export default function Navbar({ onToggleSidebar, activeRoleConfig }) {
   const navigate = useNavigate();
   const { user, isAuthenticated, logout } = useAuth();
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/login');
   };
 
