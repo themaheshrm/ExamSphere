@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, Lock, Eye, EyeOff, BookOpen, AlertCircle, Info, Zap } from 'lucide-react';
+import { GraduationCap, Lock, Eye, EyeOff, BookOpen, AlertCircle } from 'lucide-react';
 import InputField from '../../components/common/InputField';
 import Button from '../../components/common/Button';
 import { useAuth } from '../../context/AuthContext';
@@ -8,9 +8,7 @@ import { USER_ROLES } from '../../utils/constants';
 
 export default function StudentLoginForm({ onForgotPassword }) {
   const navigate = useNavigate();
-  const { login, demoLogin, demoCredentials, isLoading, error, clearError } = useAuth();
-
-  const studentDemo = demoCredentials[USER_ROLES.STUDENT];
+  const { login, isLoading, error, clearError } = useAuth();
 
   const [formData, setFormData] = useState({
     usn: '',
@@ -20,24 +18,6 @@ export default function StudentLoginForm({ onForgotPassword }) {
 
   const [showPassword, setShowPassword] = useState(false);
   const [formErrors, setFormErrors] = useState({});
-
-  const handleQuickFill = () => {
-    setFormData({
-      usn: studentDemo.identifier,
-      password: studentDemo.password,
-      remember: true,
-    });
-    setFormErrors({});
-    clearError();
-  };
-
-  const handleDirectDemoLogin = async () => {
-    clearError();
-    const result = await demoLogin(USER_ROLES.STUDENT);
-    if (result.success) {
-      navigate('/student');
-    }
-  };
 
   const validate = () => {
     const errors = {};
@@ -69,7 +49,6 @@ export default function StudentLoginForm({ onForgotPassword }) {
       identifier: formData.usn.toUpperCase(),
       password: formData.password,
       role: USER_ROLES.STUDENT,
-      remember: formData.remember,
     });
 
     if (result.success) {
@@ -79,27 +58,6 @@ export default function StudentLoginForm({ onForgotPassword }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-      {/* Demo Credentials Helper Pill */}
-      <div className="p-3 rounded border border-emerald-200 bg-emerald-50/70 text-xs">
-        <div className="flex items-center justify-between pb-1.5 border-b border-emerald-200/60 mb-2">
-          <span className="font-semibold text-emerald-900 flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5 text-emerald-600" />
-            Candidate / Student Demo Credentials
-          </span>
-          <button
-            type="button"
-            onClick={handleQuickFill}
-            className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 hover:underline"
-          >
-            Auto Fill Form
-          </button>
-        </div>
-        <div className="font-mono text-[11px] text-emerald-900 space-y-0.5">
-          <p>USN: <span className="font-bold">{studentDemo.identifier}</span></p>
-          <p>Password: <span className="font-bold">{studentDemo.password}</span></p>
-        </div>
-      </div>
-
       {/* Error Banner */}
       {error && (
         <div className="flex items-start gap-2.5 p-3 rounded border border-rose-200 bg-rose-50 text-rose-800 text-xs">
@@ -177,8 +135,8 @@ export default function StudentLoginForm({ onForgotPassword }) {
         </button>
       </div>
 
-      {/* Buttons */}
-      <div className="space-y-2 pt-2">
+      {/* Submit Button */}
+      <div className="pt-2">
         <Button
           type="submit"
           variant="primary"
@@ -188,18 +146,6 @@ export default function StudentLoginForm({ onForgotPassword }) {
           icon={BookOpen}
         >
           Access Student CBT Console
-        </Button>
-
-        <Button
-          type="button"
-          variant="secondary"
-          size="md"
-          className="w-full text-emerald-700 hover:bg-emerald-50 border-emerald-200"
-          onClick={handleDirectDemoLogin}
-          isLoading={isLoading}
-          icon={Zap}
-        >
-          1-Click Demo Login as Student
         </Button>
       </div>
 

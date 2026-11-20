@@ -1,149 +1,225 @@
 /**
  * ExamSphere Authentication Service
- * Live integration with Supabase Auth and PostgreSQL Profiles.
+ * Secure integration with Supabase Auth — profiles are the sole source of role truth.
+ *
+ * Security invariants:
+ *   - Role is NEVER accepted from client input or fallback defaults.
+ *   - A missing or unreadable profile row rejects the login.
+ *   - USN and Admin ID resolution queries the profiles table, not a hardcoded map.
+ *   - Supabase session is the only token — no parallel localStorage copies.
+ *   - No demo credentials or 1-click bypass exist in this module.
  */
 
 import { supabase } from './supabase';
 import { USER_ROLES } from '../utils/constants';
 
-const TOKEN_KEY = 'examsphere_auth_token';
-const USER_KEY = 'examsphere_auth_user';
-
-// Normalizes PostgreSQL enum 'super_admin' to frontend 'super-admin'
-export const normalizeRole = (dbRole) => {
-  if (dbRole === 'super_admin') return USER_ROLES.SUPER_ADMIN;
-  if (dbRole === 'admin') return USER_ROLES.ADMIN;
-  return USER_ROLES.STUDENT;
+// ─── Allowed DB role values → frontend enum ────────────────────────────────
+const DB_ROLE_MAP = {
+  super_admin: USER_ROLES.SUPER_ADMIN,
+  admin: USER_ROLES.ADMIN,
+  student: USER_ROLES.STUDENT,
 };
 
-// Verified Dr. AIT live Supabase accounts
-export const DEMO_CREDENTIALS = {
-  [USER_ROLES.SUPER_ADMIN]: {
-    identifier: 'superadmin@drait.edu.in',
-    password: 'superadmin@drait.edu.in',
-    label: 'Super Admin',
-    email: 'superadmin@drait.edu.in',
-    redirectTo: '/super-admin',
-  },
-  [USER_ROLES.ADMIN]: {
-    identifier: 'admin@drait.edu.in',
-    password: 'admin@drait.edu.in',
-    label: 'Institution Admin (COE)',
-    email: 'admin@drait.edu.in',
-    redirectTo: '/admin',
-  },
-  [USER_ROLES.STUDENT]: {
-    identifier: '1DA22CS001',
-    password: 'student@drait.edu.in',
-    label: 'Candidate / Examinee',
-    email: 'student@drait.edu.in',
-    redirectTo: '/student',
-  },
+/**
+ * Strictly maps a database enum to its frontend constant.
+ * Returns null for any unknown or missing value — the caller MUST reject null.
+ */
+export function normalizeRole(dbRole) {
+  return DB_ROLE_MAP[dbRole] ?? null;
+}
+
+// ─── Role → dashboard path mapping ─────────────────────────────────────────
+const ROLE_ROUTES = {
+  [USER_ROLES.SUPER_ADMIN]: '/super-admin',
+  [USER_ROLES.ADMIN]: '/admin',
+  [USER_ROLES.STUDENT]: '/student',
 };
 
+export function getRouteForRole(role) {
+  return ROLE_ROUTES[role] || '/login';
+}
+
+// ─── Profile fetcher (reused by login + session rehydration) ────────────────
+/**
+ * Fetches and validates the profiles row for the given auth user id.
+ * Throws on any failure — callers must catch and reject the session.
+ */
+export async function fetchVerifiedProfile(userId) {
+  const { data: profile, error } = await supabase
+    .from('profiles')
+    .select('id, full_name, email, role, usn, staff_id, institution_id')
+    .eq('id', userId)
+    .single();
+
+  if (error || !profile) {
+    throw new Error(
+      'Your account does not have a valid profile. Contact your institution administrator.'
+    );
+  }
+
+  const role = normalizeRole(profile.role);
+  if (!role) {
+    throw new Error(
+      `Unrecognized account role "${profile.role}". Contact your platform administrator.`
+    );
+  }
+
+  return { profile, role };
+}
+
+/**
+ * Builds the user object exposed to the UI from a verified profile + auth email.
+ * This is the ONLY place the user shape is defined.
+ */
+export function buildUserObject(authUser, profile, role) {
+  return {
+    id: authUser.id,
+    name: profile.full_name || authUser.email?.split('@')[0] || 'User',
+    email: authUser.email,
+    identifier: profile.usn || profile.staff_id || authUser.email,
+    usn: profile.usn || null,
+    staffId: profile.staff_id || null,
+    role,
+    institution_id: profile.institution_id || null,
+  };
+}
+
+// ─── Identifier resolution ──────────────────────────────────────────────────
+
+/**
+ * Resolves a student USN to the auth email by querying the profile_email_lookup view.
+ * Falls back to treating the identifier as a direct email if it already contains '@'.
+ *
+ * The view is accessible to anon (pre-auth) and exposes only usn/staff_id/email.
+ * If the view does not exist yet (migration not run), the student must use their email.
+ */
+async function resolveStudentIdentifier(identifier) {
+  const trimmed = identifier.trim();
+
+  // Already an email — use it directly.
+  if (trimmed.includes('@')) {
+    return trimmed.toLowerCase();
+  }
+
+  // Query the lookup view for a matching USN
+  const { data, error } = await supabase
+    .from('profile_email_lookup')
+    .select('email')
+    .ilike('usn', trimmed)
+    .single();
+
+  if (error || !data?.email) {
+    throw new Error(
+      `No account found for USN "${trimmed.toUpperCase()}". Verify your USN or use your registered email to sign in.`
+    );
+  }
+
+  return data.email.toLowerCase();
+}
+
+/**
+ * Resolves an admin identifier (staff ID or email) to the auth email.
+ * If the identifier contains '@', it is treated as an email directly.
+ * Otherwise queries the profile_email_lookup view for a matching staff_id.
+ */
+async function resolveAdminIdentifier(identifier) {
+  const trimmed = identifier.trim();
+
+  if (trimmed.includes('@')) {
+    return trimmed.toLowerCase();
+  }
+
+  // Query the lookup view for a matching staff_id
+  const { data, error } = await supabase
+    .from('profile_email_lookup')
+    .select('email')
+    .ilike('staff_id', trimmed)
+    .single();
+
+  if (error || !data?.email) {
+    throw new Error(
+      `No staff account found for ID "${trimmed}". Verify your Staff ID or use your official email to sign in.`
+    );
+  }
+
+  return data.email.toLowerCase();
+}
+
+/**
+ * Resolves a super-admin identifier to an email.
+ * Super admins must always use their email — no alternative ID scheme.
+ */
+function resolveSuperAdminIdentifier(identifier) {
+  const trimmed = identifier.trim();
+  if (!trimmed.includes('@')) {
+    throw new Error('Super Admin login requires a valid email address.');
+  }
+  return trimmed.toLowerCase();
+}
+
+// ─── Public auth service ────────────────────────────────────────────────────
 export const authService = {
   /**
-   * Resolves login identifier (USN or Email) to an authentication email
+   * Resolves any identifier to an auth email based on the login-form role context.
+   * The role param is used ONLY for identifier resolution — never for authorization.
    */
-  resolveEmail(identifier, role) {
-    const trimmed = identifier.trim();
-    if (trimmed.includes('@')) {
-      return trimmed.toLowerCase();
+  async resolveEmail(identifier, role) {
+    switch (role) {
+      case USER_ROLES.STUDENT:
+        return resolveStudentIdentifier(identifier);
+      case USER_ROLES.ADMIN:
+        return resolveAdminIdentifier(identifier);
+      case USER_ROLES.SUPER_ADMIN:
+        return resolveSuperAdminIdentifier(identifier);
+      default:
+        throw new Error('Invalid login context.');
     }
-
-    // If student enters USN e.g. 1DA22CS001
-    const studentDemo = DEMO_CREDENTIALS[USER_ROLES.STUDENT];
-    if (trimmed.toUpperCase() === studentDemo.identifier.toUpperCase()) {
-      return studentDemo.email;
-    }
-
-    // Default institutional format if candidate enters their roll number
-    return `${trimmed.toLowerCase()}@drait.edu.in`;
   },
 
   /**
-   * Submit credentials to Supabase Auth and fetch verified database profile
+   * Authenticates against Supabase Auth, then fetches and validates the
+   * database profile. Rejects immediately if the profile is missing or
+   * the role is invalid.
+   *
+   * Returns { user, redirectTo } on success.
+   * Throws on any failure.
    */
-  async login({ identifier, password, role, remember = false }) {
-    const email = this.resolveEmail(identifier, role);
+  async login({ identifier, password, role }) {
+    // 1. Resolve the identifier to an email (may query DB for USN/staff_id)
+    const email = await this.resolveEmail(identifier, role);
 
-    // 1. Authenticate against Supabase Auth service
+    // 2. Authenticate with Supabase Auth
     const { data: authData, error: authError } =
-      await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      await supabase.auth.signInWithPassword({ email, password });
 
     if (authError) {
       throw new Error(authError.message || 'Invalid login credentials.');
     }
 
-    const authUser = authData.user;
-    const session = authData.session;
-
-    // 2. Query user profile from PostgreSQL profiles table
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', authUser.id)
-      .single();
-
-    if (profileError || !profile) {
-      // Fallback if profile row is not yet queryable
-      console.warn('Profile read warning:', profileError);
+    if (!authData.session?.access_token) {
+      throw new Error('Authentication succeeded but no session was created.');
     }
 
-    const userRole = normalizeRole(profile?.role || role);
+    // 3. Fetch and validate the database profile (role comes ONLY from here)
+    const { profile, role: verifiedRole } = await fetchVerifiedProfile(
+      authData.user.id
+    );
 
-    const userObj = {
-      id: authUser.id,
-      name: profile?.full_name || authUser.user_metadata?.full_name || email.split('@')[0],
-      email: authUser.email,
-      identifier: profile?.usn || email,
-      usn: profile?.usn || null,
-      role: userRole,
-      institution_id: profile?.institution_id || null,
-      institution: profile?.institution_id ? 'Apex Engineering University (Dr. AIT)' : 'ExamSphere Global Cloud',
-    };
-
-    const token = session?.access_token || `jwt-supabase-${Date.now()}`;
-    this.setToken(token, remember);
-    this.setUser(userObj, remember);
-
-    const targetRoute =
-      userRole === USER_ROLES.SUPER_ADMIN
-        ? '/super-admin'
-        : userRole === USER_ROLES.ADMIN
-        ? '/admin'
-        : '/student';
+    // 4. Build the canonical user object
+    const user = buildUserObject(authData.user, profile, verifiedRole);
 
     return {
-      token,
-      user: userObj,
-      redirectTo: targetRoute,
+      user,
+      redirectTo: getRouteForRole(verifiedRole),
     };
   },
 
   /**
-   * 1-Click live login using verified accounts
-   */
-  async demoLogin(role) {
-    const creds = DEMO_CREDENTIALS[role];
-    if (!creds) throw new Error(`Role profile '${role}' not found.`);
-
-    return this.login({
-      identifier: creds.email,
-      password: creds.password,
-      role,
-      remember: false,
-    });
-  },
-
-  /**
-   * Request password reset via Supabase Auth
+   * Request password reset via Supabase Auth.
    */
   async requestPasswordReset({ identifier, role }) {
-    const email = this.resolveEmail(identifier, role);
+    const email = await this.resolveEmail(identifier, role);
+
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/login`,
     });
@@ -154,47 +230,7 @@ export const authService = {
 
     return {
       success: true,
-      message: `Password reset instructions have been dispatched to ${email}.`,
+      message: `Password reset instructions have been sent to ${email}.`,
     };
-  },
-
-  /**
-   * Token and user session management
-   */
-  getToken() {
-    return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY);
-  },
-
-  setToken(token, remember = false) {
-    if (remember) {
-      localStorage.setItem(TOKEN_KEY, token);
-    } else {
-      sessionStorage.setItem(TOKEN_KEY, token);
-    }
-  },
-
-  getUser() {
-    const raw = sessionStorage.getItem(USER_KEY) || localStorage.getItem(USER_KEY);
-    try {
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  },
-
-  setUser(user, remember = false) {
-    const serialized = JSON.stringify(user);
-    if (remember) {
-      localStorage.setItem(USER_KEY, serialized);
-    } else {
-      sessionStorage.setItem(USER_KEY, serialized);
-    }
-  },
-
-  clearSession() {
-    sessionStorage.removeItem(TOKEN_KEY);
-    sessionStorage.removeItem(USER_KEY);
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
   },
 };

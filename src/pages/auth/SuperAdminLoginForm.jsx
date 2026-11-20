@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mail, Lock, Eye, EyeOff, ShieldCheck, AlertCircle, Zap, Copy } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, ShieldCheck, AlertCircle } from 'lucide-react';
 import InputField from '../../components/common/InputField';
 import Button from '../../components/common/Button';
 import { useAuth } from '../../context/AuthContext';
@@ -8,9 +8,7 @@ import { USER_ROLES } from '../../utils/constants';
 
 export default function SuperAdminLoginForm({ onForgotPassword }) {
   const navigate = useNavigate();
-  const { login, demoLogin, demoCredentials, isLoading, error, clearError } = useAuth();
-
-  const superAdminDemo = demoCredentials[USER_ROLES.SUPER_ADMIN];
+  const { login, isLoading, error, clearError } = useAuth();
 
   const [formData, setFormData] = useState({
     email: '',
@@ -20,24 +18,6 @@ export default function SuperAdminLoginForm({ onForgotPassword }) {
 
   const [showPassword, setShowPassword] = useState(false);
   const [formErrors, setFormErrors] = useState({});
-
-  const handleQuickFill = () => {
-    setFormData({
-      email: superAdminDemo.identifier,
-      password: superAdminDemo.password,
-      remember: true,
-    });
-    setFormErrors({});
-    clearError();
-  };
-
-  const handleDirectDemoLogin = async () => {
-    clearError();
-    const result = await demoLogin(USER_ROLES.SUPER_ADMIN);
-    if (result.success) {
-      navigate('/super-admin');
-    }
-  };
 
   const validate = () => {
     const errors = {};
@@ -69,7 +49,6 @@ export default function SuperAdminLoginForm({ onForgotPassword }) {
       identifier: formData.email,
       password: formData.password,
       role: USER_ROLES.SUPER_ADMIN,
-      remember: formData.remember,
     });
 
     if (result.success) {
@@ -79,27 +58,6 @@ export default function SuperAdminLoginForm({ onForgotPassword }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-      {/* Demo Credentials Helper Pill */}
-      <div className="p-3 rounded border border-purple-200 bg-purple-50/70 text-xs">
-        <div className="flex items-center justify-between pb-1.5 border-b border-purple-200/60 mb-2">
-          <span className="font-semibold text-purple-900 flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5 text-purple-600" />
-            Super Admin Demo Credentials
-          </span>
-          <button
-            type="button"
-            onClick={handleQuickFill}
-            className="text-[11px] font-semibold text-purple-700 hover:text-purple-900 hover:underline"
-          >
-            Auto Fill Form
-          </button>
-        </div>
-        <div className="font-mono text-[11px] text-purple-900 space-y-0.5">
-          <p>Email: <span className="font-bold">{superAdminDemo.identifier}</span></p>
-          <p>Password: <span className="font-bold">{superAdminDemo.password}</span></p>
-        </div>
-      </div>
-
       {/* Error Banner */}
       {error && (
         <div className="flex items-start gap-2.5 p-3 rounded border border-rose-200 bg-rose-50 text-rose-800 text-xs">
@@ -115,7 +73,7 @@ export default function SuperAdminLoginForm({ onForgotPassword }) {
       <InputField
         label="Root Administrator Email"
         type="email"
-        placeholder="root.admin@examsphere.io"
+        placeholder="admin@institution.edu.in"
         value={formData.email}
         onChange={(e) => {
           setFormData({ ...formData, email: e.target.value });
@@ -177,8 +135,8 @@ export default function SuperAdminLoginForm({ onForgotPassword }) {
         </button>
       </div>
 
-      {/* Buttons */}
-      <div className="space-y-2 pt-2">
+      {/* Submit Button */}
+      <div className="pt-2">
         <Button
           type="submit"
           variant="primary"
@@ -188,18 +146,6 @@ export default function SuperAdminLoginForm({ onForgotPassword }) {
           icon={ShieldCheck}
         >
           Sign In to Super Admin Console
-        </Button>
-
-        <Button
-          type="button"
-          variant="secondary"
-          size="md"
-          className="w-full text-purple-700 hover:bg-purple-50 border-purple-200"
-          onClick={handleDirectDemoLogin}
-          isLoading={isLoading}
-          icon={Zap}
-        >
-          1-Click Demo Login as Super Admin
         </Button>
       </div>
 
