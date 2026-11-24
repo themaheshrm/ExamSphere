@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Ban, CheckCircle2, Download, Edit3, Plus, Search, Trash2, UserPlus, Users } from 'lucide-react';
+import { Ban, CheckCircle2, Download, Edit3, Plus, RotateCcw, Search, Trash2, UserPlus, Users } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
 import InputField from '../../components/common/InputField';
@@ -9,12 +9,13 @@ import PageHeader from '../../components/common/PageHeader';
 import Pagination from '../../components/common/Pagination';
 import EmptyState from '../../components/common/EmptyState';
 import StatusBadge from '../../components/common/StatusBadge';
+import Badge from '../../components/common/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useToast } from '../../components/common/Toast';
 import { studentRosterService } from '../../services/studentRosterService';
 import { examRandomizerService } from '../../services/examRandomizerService';
 import { activityLogService } from '../../services/activityLogService';
-import { assignPatternToStudent } from '../../utils/randomizationEngine';
+import { assignPatternForCandidate } from '../../utils/patternAssignment';
 import { usePagination } from '../../utils/usePagination';
 import { downloadText, toCsv } from '../../services/localStore';
 import { useAuth } from '../../context/AuthContext';
@@ -38,20 +39,32 @@ export default function StudentsPage() {
   const [withholdReason, setWithholdReason] = useState('');
 
   const meta = examRandomizerService.getExamState().meta;
-  const attempts = useMemo(() => {
-    const map = {};
-    examRandomizerService.listAttempts().forEach((a) => { if (!map[a.studentIdentifier]) map[a.studentIdentifier] = a; });
-    return map;
-  }, []);
+  const [, setAttemptsVersion] = useState(0); // bumped to re-read attempts after a demo reset
+  const [resetDemoOpen, setResetDemoOpen] = useState(false);
+  const attempts = {};
+  examRandomizerService.listAttempts().forEach((a) => { if (!attempts[a.studentIdentifier]) attempts[a.studentIdentifier] = a; });
 
   const refresh = () => setRoster(studentRosterService.list());
+  const demoUsns = roster.filter((s) => s.demo).map((s) => s.usn);
+
+  const resetDemoAttempts = () => {
+    try {
+      const removed = examRandomizerService.resetDemoAttempts(demoUsns);
+      log('Reset demo attempts', `${demoUsns.length} demo account(s)`, `${removed} attempt(s) cleared`);
+      notify(`Demo attempts reset (${removed} cleared). Patterns stay assigned A–E.`);
+      setAttemptsVersion((v) => v + 1);
+    } catch (error) {
+      notify(error.message, 'error');
+    }
+    setResetDemoOpen(false);
+  };
   const log = (action, target, details) => activityLogService.log({ action, category: 'candidate', actor: user, target, details });
 
   const sections = [...new Set(roster.map((s) => s.section))].sort();
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return roster.filter((s) => (!term || `${s.usn} ${s.name} ${s.email}`.toLowerCase().includes(term))
-      && (!section || s.section === section) && (!status || s.status === status));
+      && (!section || s.section === section) && (!status || (status === 'demo' ? s.demo : s.status === status)));
   }, [roster, search, section, status]);
   const { pageItems, paginationProps, resetPage } = usePagination(filtered, 10);
 
@@ -109,7 +122,7 @@ export default function StudentsPage() {
       { label: 'Semester', value: (s) => s.semester },
       { label: 'Section', value: (s) => s.section },
       { label: 'Eligibility', value: (s) => s.status },
-      { label: 'Pattern', value: (s) => assignPatternToStudent(s.usn) },
+      { label: 'Pattern', value: (s) => assignPatternForCandidate(s.usn) },
       { label: 'Attempt', value: (s) => attempts[s.usn]?.status || 'not started' },
       { label: 'Score', value: (s) => attempts[s.usn]?.result?.score ?? '' },
     ]));
@@ -128,6 +141,9 @@ export default function StudentsPage() {
         description={`Roster and eligibility for ${meta.courseCode} — ${meta.courseTitle}. Withheld candidates cannot start the examination.`}
         actions={(
           <>
+            {demoUsns.length > 0 && (
+              <Button variant="secondary" icon={RotateCcw} onClick={() => setResetDemoOpen(true)}>Reset demo attempts</Button>
+            )}
             <Button variant="secondary" icon={Download} onClick={exportCsv} disabled={!filtered.length}>Export CSV</Button>
             <Button icon={UserPlus} onClick={() => openForm(null)}>Add candidate</Button>
           </>
@@ -154,6 +170,7 @@ export default function StudentsPage() {
             <option value="">All eligibility</option>
             <option value="Eligible">Eligible</option>
             <option value="Withheld">Withheld</option>
+            <option value="demo">Demo accounts</option>
           </select>
         </div>
 
@@ -191,7 +208,7 @@ export default function StudentsPage() {
                     <TableRow key={s.usn} isSelected={selected.includes(s.usn)}>
                       <TableCell><input type="checkbox" aria-label={`Select ${s.usn}`} checked={selected.includes(s.usn)} onChange={() => toggle(s.usn)} className="h-4 w-4 accent-[#1E3A5F]" /></TableCell>
                       <TableCell>
-                        <p className="font-mono text-xs font-semibold text-[#1E3A5F]">{s.usn}</p>
+                        <p className="flex items-center gap-1.5 font-mono text-xs font-semibold text-[#1E3A5F]">{s.usn}{s.demo && <Badge size="sm" variant="primary" className="font-sans">Demo</Badge>}</p>
                         <p className="font-medium text-slate-900">{s.name}</p>
                         <p className="text-[11px] text-slate-500">{s.email}</p>
                         <p className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 sm:hidden"><StatusBadge status={s.status} size="sm" /><span>{attempt?.status === 'submitted' ? `${attempt.result?.score}/${attempt.result?.maxScore}` : attempt ? 'In progress' : 'Not started'}</span></p>
@@ -201,7 +218,7 @@ export default function StudentsPage() {
                         <StatusBadge status={s.status} size="sm" />
                         {s.remarks && <p className="mt-1 max-w-48 text-[11px] text-slate-500">{s.remarks}</p>}
                       </TableCell>
-                      <TableCell className="hidden font-mono sm:table-cell">{assignPatternToStudent(s.usn)}</TableCell>
+                      <TableCell className="hidden font-mono sm:table-cell">{assignPatternForCandidate(s.usn)}</TableCell>
                       <TableCell className="hidden sm:table-cell">
                         {!attempt && <span className="text-[11px] text-slate-400">Not started</span>}
                         {attempt?.status === 'active' && <StatusBadge status="In progress" size="sm" />}
@@ -272,6 +289,16 @@ export default function StudentsPage() {
       >
         <InputField label="Reason" required value={withholdReason} onChange={(e) => setWithholdReason(e.target.value)} placeholder="e.g. Attendance below 85%" data-autofocus />
       </Modal>
+
+      <ConfirmDialog
+        isOpen={resetDemoOpen}
+        onClose={() => setResetDemoOpen(false)}
+        onConfirm={resetDemoAttempts}
+        tone="warning"
+        title="Reset demo attempts?"
+        confirmLabel="Reset demo attempts"
+        description={`Clears attempts and provisional results for the ${demoUsns.length} demo account(s) only (${demoUsns.join(', ')}) so the randomisation demo can be run again. Real candidates are never affected, and assigned patterns do not change.`}
+      />
 
       <ConfirmDialog
         isOpen={Boolean(removeTarget)}

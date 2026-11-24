@@ -5,10 +5,9 @@
  */
 
 import { examMeta, examQuestions } from '../data/examMockData.js';
-import {
-  generate10ExamPatterns,
-  assignPatternToStudent,
-} from '../utils/randomizationEngine.js';
+import { generate10ExamPatterns } from '../utils/randomizationEngine.js';
+import { assignPatternForCandidate } from '../utils/patternAssignment.js';
+import { isDemoStudent } from '../data/demoAccounts.js';
 
 const STORAGE_KEY = 'examsphere_randomized_exam_v1';
 const ATTEMPTS_STORAGE_KEY = 'examsphere_student_attempts_v1';
@@ -283,7 +282,7 @@ class ExamRandomizerService {
     if (activeAttempt?.status === 'active') return this.makeStudentPaper(activeAttempt);
     if (!state.isPublished) return null;
 
-    const patternLabel = assignPatternToStudent(normalizedId);
+    const patternLabel = assignPatternForCandidate(normalizedId);
     const patternData = state.patterns?.[patternLabel];
     if (!patternData) return null;
 
@@ -421,6 +420,43 @@ class ExamRandomizerService {
         result: attempt.result || null,
       }))
       .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
+  }
+
+  /**
+   * Demo support only: remove the attempts and provisional results of the
+   * named demo accounts so a randomisation demo can be rehearsed and run
+   * again. Refuses any identifier that is not a registered demo account, so
+   * real candidates' attempts can never be cleared through this path.
+   * Pattern assignment is unaffected (it is fixed per account).
+   */
+  resetDemoAttempts(studentIdentifiers) {
+    const ids = [...new Set((studentIdentifiers || []).map((id) => String(id ?? '').trim().toUpperCase()))];
+    const invalid = ids.filter((id) => !isDemoStudent(id));
+    if (!ids.length || invalid.length) {
+      throw new Error(`Only demo accounts can be reset${invalid.length ? ` (rejected: ${invalid.join(', ')})` : ''}.`);
+    }
+    const registry = this.readPaperAttempts();
+    const removed = [];
+    Object.values(registry.attempts || {}).forEach((attempt) => {
+      if (!ids.includes(attempt.studentIdentifier)) return;
+      removed.push(attempt.attemptId);
+      delete registry.attempts[attempt.attemptId];
+      if (registry.activeByStudent[attempt.attemptKey] === attempt.attemptId) delete registry.activeByStudent[attempt.attemptKey];
+      for (const storage of getStorages()) {
+        try { storage?.removeItem(`examsphere_attempt_${attempt.attemptId}`); } catch { /* ignore */ }
+      }
+    });
+    if (!this.savePaperAttempts(registry)) throw new Error('Browser storage is unavailable.');
+
+    let results = this.memoryStudentResults;
+    const stored = safeStorageRead(ATTEMPTS_STORAGE_KEY);
+    if (stored) {
+      try { results = JSON.parse(stored); } catch { /* retain memory copy */ }
+    }
+    ids.forEach((id) => { delete results[id]; });
+    this.memoryStudentResults = results;
+    safeStorageWrite(ATTEMPTS_STORAGE_KEY, JSON.stringify(results));
+    return removed.length;
   }
 
   saveStudentAttempt(studentIdentifier, result) {

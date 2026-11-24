@@ -26,7 +26,7 @@ import { studentRosterService } from '../../services/studentRosterService';
 import { notificationService } from '../../services/notificationService';
 import { platformService } from '../../services/platformService';
 import { authService } from '../../services/authService';
-import { assignPatternToStudent } from '../../utils/randomizationEngine';
+import { assignPatternForCandidate } from '../../utils/patternAssignment';
 import { useDataVersion } from '../../utils/useDataVersion';
 import { formatDateTime } from '../../utils/format';
 import { INSTITUTION, USER_ROLES } from '../../utils/constants';
@@ -68,7 +68,7 @@ export default function StudentDashboard() {
 
   const studentIdentity = user ? (user.usn || user.identifier || user.id || null) : studentInfo.usn;
   const normalizedId = String(studentIdentity ?? '').trim().toUpperCase();
-  const assignedPattern = assignPatternToStudent(studentIdentity);
+  const assignedPattern = assignPatternForCandidate(studentIdentity);
   const eligible = studentRosterService.isEligible(normalizedId);
   const rosterEntry = studentRosterService.find(normalizedId);
   const ownAttempts = examRandomizerService.listAttempts().filter((a) => a.studentIdentifier === normalizedId);
