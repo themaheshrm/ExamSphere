@@ -1,16 +1,20 @@
 import {
-  ShieldCheck,
+  Activity,
+  Award,
+  BarChart3,
+  Bell,
+  BookOpenCheck,
   Building2,
-  Sliders,
-  LayoutDashboard,
+  ClipboardList,
   FileSpreadsheet,
   HelpCircle,
+  LayoutDashboard,
+  LifeBuoy,
+  ScrollText,
+  Sliders,
+  UserCircle,
   Users,
-  GraduationCap,
-  BookOpenCheck,
-  Award,
-  Clock,
-  Settings
+  UserCog,
 } from 'lucide-react';
 
 export const USER_ROLES = {
@@ -19,81 +23,105 @@ export const USER_ROLES = {
   STUDENT: 'student',
 };
 
+export const ROLE_LABELS = {
+  [USER_ROLES.SUPER_ADMIN]: 'Super Administrator',
+  [USER_ROLES.ADMIN]: 'Institution Administrator',
+  [USER_ROLES.STUDENT]: 'Candidate',
+};
+
+export const INSTITUTION = {
+  name: 'Dr. Ambedkar Institute of Technology',
+  shortName: 'Dr. AIT',
+  office: 'Office of the Controller of Examinations',
+  academicYear: '2026–27',
+};
+
+/**
+ * Sidebar navigation per role. Student items address the existing
+ * `/student?tab=…` views; every other path is a real route in AppRoutes.
+ */
 export const NAVIGATION_CONFIG = {
   [USER_ROLES.SUPER_ADMIN]: {
-    title: 'Super Admin Portal',
-    badge: 'Enterprise Root',
-    badgeColor: 'bg-purple-100 text-purple-700 border-purple-200',
-    navItems: [
+    title: 'Platform Administration',
+    sections: [
       {
-        label: 'System Overview',
-        path: '/super-admin',
-        icon: LayoutDashboard,
+        title: 'Platform',
+        items: [
+          { label: 'Global Overview', path: '/super-admin', icon: LayoutDashboard },
+          { label: 'Institutions', path: '/super-admin/organizations', icon: Building2 },
+          { label: 'Users & Admins', path: '/super-admin/users', icon: UserCog },
+          { label: 'System Monitoring', path: '/super-admin/monitoring', icon: Activity },
+          { label: 'Activity Logs', path: '/super-admin/activity', icon: ScrollText },
+          { label: 'Platform Settings', path: '/super-admin/settings', icon: Sliders },
+        ],
       },
       {
-        label: 'Institutions',
-        path: '/super-admin/organizations',
-        icon: Building2,
+        title: 'Examination Office',
+        items: [
+          { label: 'Admin Dashboard', path: '/admin', icon: BarChart3 },
+          { label: 'Examinations', path: '/admin/exams', icon: FileSpreadsheet },
+          { label: 'Question Bank', path: '/admin/questions', icon: HelpCircle },
+        ],
       },
       {
-        label: 'Platform Settings',
-        path: '/super-admin/settings',
-        icon: Sliders,
+        title: 'Account',
+        items: [{ label: 'My Profile', path: '/super-admin/profile', icon: UserCircle }],
       },
     ],
   },
   [USER_ROLES.ADMIN]: {
-    title: 'Admin Control Center',
-    badge: 'Staff Access',
-    badgeColor: 'bg-blue-100 text-blue-700 border-blue-200',
-    navItems: [
+    title: 'Examination Office',
+    sections: [
       {
-        label: 'Dashboard',
-        path: '/admin',
-        icon: LayoutDashboard,
+        title: 'Examinations',
+        items: [
+          { label: 'Dashboard', path: '/admin', icon: LayoutDashboard },
+          { label: 'Question Bank', path: '/admin/questions', icon: HelpCircle },
+          { label: 'Examinations', path: '/admin/exams', icon: FileSpreadsheet },
+          { label: 'Candidates', path: '/admin/students', icon: Users },
+          { label: 'Results & Reports', path: '/admin/results', icon: ClipboardList },
+        ],
       },
       {
-        label: 'Exam Management',
-        path: '/admin/exams',
-        icon: FileSpreadsheet,
-      },
-      {
-        label: 'Question Bank',
-        path: '/admin/questions',
-        icon: HelpCircle,
-      },
-      {
-        label: 'Student Candidates',
-        path: '/admin/students',
-        icon: Users,
+        title: 'Account',
+        items: [
+          { label: 'Notifications', path: '/admin/notifications', icon: Bell },
+          { label: 'My Profile', path: '/admin/profile', icon: UserCircle },
+        ],
       },
     ],
   },
   [USER_ROLES.STUDENT]: {
-    title: 'Student CBT Portal',
-    badge: 'Candidate Area',
-    badgeColor: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-    navItems: [
+    title: 'Candidate Portal',
+    sections: [
       {
-        label: 'My Dashboard',
-        path: '/student',
-        icon: LayoutDashboard,
+        title: 'Examinations',
+        items: [
+          { label: 'Dashboard', tab: 'dashboard', icon: LayoutDashboard },
+          { label: 'My Examinations', tab: 'exams', icon: BookOpenCheck },
+          { label: 'Results & History', tab: 'results', icon: Award },
+        ],
       },
       {
-        label: 'Available Exams',
-        path: '/student/exams',
-        icon: BookOpenCheck,
-      },
-      {
-        label: 'CBT Exam Simulator',
-        path: '/student/exam-preview',
-        icon: Clock,
-      },
-      {
-        label: 'Results & Reports',
-        path: '/student/results',
-        icon: Award,
+        title: 'Account',
+        items: [
+          { label: 'Notifications', tab: 'notifications', icon: Bell },
+          { label: 'My Profile', tab: 'profile', icon: UserCircle },
+          { label: 'Help & Support', tab: 'support', icon: LifeBuoy },
+        ],
       },
     ],
   },
+};
+
+export const PROFILE_PATHS = {
+  [USER_ROLES.SUPER_ADMIN]: '/super-admin/profile',
+  [USER_ROLES.ADMIN]: '/admin/profile',
+  [USER_ROLES.STUDENT]: '/student?tab=profile',
+};
+
+export const NOTIFICATION_PATHS = {
+  [USER_ROLES.SUPER_ADMIN]: '/super-admin/activity',
+  [USER_ROLES.ADMIN]: '/admin/notifications',
+  [USER_ROLES.STUDENT]: '/student?tab=notifications',
 };

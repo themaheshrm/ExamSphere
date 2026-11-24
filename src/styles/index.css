@@ -73,11 +73,21 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Enterprise Headings */
+  /* Headings inherit their colour so they stay legible on navy surfaces. */
   h1, h2, h3, h4, h5, h6 {
-    color: #0F172A;
+    color: inherit;
     font-weight: 600;
     letter-spacing: -0.015em;
+  }
+
+  /* One consistent, highly visible keyboard focus ring across the app. */
+  :focus-visible {
+    outline: 2px solid #1E3A5F;
+    outline-offset: 2px;
+  }
+
+  button:not(:disabled), [role="button"], summary, label[for] {
+    cursor: pointer;
   }
 
   /* Table styling defaults */
@@ -109,4 +119,33 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: #94A3B8;
+}
+
+/* Respect reduced-motion preferences: keep transitions functional but instant. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Single, restrained entrance used by toasts and menus. */
+@keyframes es-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.es-fade-in { animation: es-fade-in 150ms ease-out; }
+
+/* Tabular numerals for timers, scores and counts. */
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* Native selects styled to match InputField (keeps native keyboard/a11y behaviour). */
+.es-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 14px;
+  padding-right: 2rem;
 }

@@ -1,691 +1,464 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
-  FileText,
-  Shuffle,
-  CheckCircle2,
-  AlertTriangle,
-  Eye,
-  EyeOff,
-  Upload,
-  RefreshCw,
-  Send,
-  Layers,
-  Sparkles,
-  Info,
-  Calendar,
-  Clock,
-  Award,
-  Lock,
-  Unlock,
-  Check,
-  Table as TableIcon,
+  CheckCircle2, Eye, EyeOff, Grid3x3, Lock, RefreshCw, RotateCcw, Save, Send, ShieldCheck, XCircle,
 } from 'lucide-react';
-import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
-import Badge from '../../components/common/Badge';
-import Modal from '../../components/common/Modal';
+import Card from '../../components/common/Card';
+import InputField from '../../components/common/InputField';
+import PageHeader from '../../components/common/PageHeader';
+import Alert from '../../components/common/Alert';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
+import StatusBadge from '../../components/common/StatusBadge';
+import Tabs, { TabPanel } from '../../components/common/Tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
+import { useToast } from '../../components/common/Toast';
 import { examRandomizerService } from '../../services/examRandomizerService';
+import { studentRosterService } from '../../services/studentRosterService';
+import { activityLogService } from '../../services/activityLogService';
 import { assignPatternToStudent, PATTERN_LABELS } from '../../utils/randomizationEngine';
+import { formatDateTime } from '../../utils/format';
+import { useAuth } from '../../context/AuthContext';
+
+const LETTERS = ['A', 'B', 'C', 'D'];
+const CHECK_LABELS = {
+  exact10Patterns: 'Exactly 10 patterns (A–J) generated',
+  allPatternsHave25Questions: 'Every pattern contains 25 questions',
+  allQuestionIdsPreserved: 'Same 25 master questions in every pattern',
+  uniqueQuestionSequences: 'All 10 question sequences are distinct',
+  allQuestionsHave4Options: 'Every question has four options',
+  answerKeysValid: 'Answer key valid for every pattern',
+};
+
+function metaToForm(meta) {
+  return {
+    courseTitle: meta.courseTitle,
+    semester: meta.semester,
+    examDate: meta.examDate,
+    durationMinutes: meta.durationMinutes,
+    instructions: (meta.instructions || []).join('\n'),
+  };
+}
 
 export default function ExamManagementPage() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { notify } = useToast();
   const [examState, setExamState] = useState(() => examRandomizerService.getExamState());
-  const [activeTab, setActiveTab] = useState('generator'); // 'generator' | 'master' | 'roster'
+  const [activeTab, setActiveTab] = useState('configuration');
   const [selectedPattern, setSelectedPattern] = useState('A');
   const [showAnswerKey, setShowAnswerKey] = useState(false);
-  const [viewMode, setViewMode] = useState('preview'); // 'preview' | 'matrix'
+  const [confirm, setConfirm] = useState(null); // 'regenerate' | 'publish' | 'unpublish' | 'reset'
+  const [configForm, setConfigForm] = useState(() => metaToForm(examState.meta));
+  const [configError, setConfigError] = useState('');
 
-  // Confirmation Modals
-  const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
-  const [showPublishConfirm, setShowPublishConfirm] = useState(false);
-  const [notification, setNotification] = useState(null);
+  const roster = useMemo(() => studentRosterService.list(), []);
+  const attempts = examRandomizerService.listAttempts();
+  const attemptByStudent = {};
+  attempts.forEach((a) => { if (!attemptByStudent[a.studentIdentifier]) attemptByStudent[a.studentIdentifier] = a; });
 
-  const showToast = (msg, type = 'success') => {
-    setNotification({ msg, type });
-    setTimeout(() => setNotification(null), 3500);
-  };
-
-  const handleRegenerate = () => {
-    if (examState.isPublished && !showRegenerateConfirm) {
-      setShowRegenerateConfirm(true);
-      return;
-    }
-    setShowRegenerateConfirm(false);
-    const updated = examRandomizerService.regeneratePatterns();
-    setExamState({ ...updated });
-    showToast('Successfully generated 10 unique patterns (Pattern A to J)!', 'success');
-  };
-
-  const handleTogglePublish = () => {
-    if (!examState.isPublished && !showPublishConfirm) {
-      setShowPublishConfirm(true);
-      return;
-    }
-    setShowPublishConfirm(false);
-
-    if (examState.isPublished) {
-      const updated = examRandomizerService.unpublishExam();
-      setExamState({ ...updated });
-      showToast('Examination set to Draft mode. Hidden from all students.', 'info');
-    } else {
-      const updated = examRandomizerService.publishExam();
-      setExamState({ ...updated });
-      showToast('Examination Published! Patterns are now live and assigned to candidates.', 'success');
-    }
-  };
-
-  const handleResetDefaults = () => {
-    const updated = examRandomizerService.resetToDefaults();
-    setExamState({ ...updated });
-    showToast('Reset to default 25 verified questions and regenerated 10 patterns.', 'info');
-  };
-
-  const currentPatternData = examState.patterns[selectedPattern];
+  const { meta } = examState;
   const verification = examState.verificationReport;
+  const currentPatternData = examState.patterns[selectedPattern];
+  const masterById = Object.fromEntries((examState.masterQuestions || []).map((q) => [q.id, q]));
+  const distribution = PATTERN_LABELS.map((label) => ({
+    label,
+    count: roster.filter((s) => s.status === 'Eligible' && assignPatternToStudent(s.usn) === label).length,
+  }));
+  const maxDist = Math.max(1, ...distribution.map((d) => d.count));
+  const activeAttempts = attempts.filter((a) => a.status === 'active').length;
+  const submittedAttempts = attempts.filter((a) => a.status === 'submitted').length;
+
+  const log = (action, details = '') => activityLogService.log({ action, category: 'exam', actor: user, target: meta.courseCode, details });
+  const refresh = (state) => {
+    setExamState({ ...state });
+    setConfigForm(metaToForm(state.meta));
+  };
+
+  const runConfirmed = () => {
+    try {
+      if (confirm === 'regenerate') {
+        refresh(examRandomizerService.regeneratePatterns());
+        log('Regenerated patterns A–J');
+        notify('Ten new patterns (A–J) were generated and verified.');
+      } else if (confirm === 'publish') {
+        refresh(examRandomizerService.publishExam());
+        log('Published examination');
+        notify('Examination published. Eligible candidates can now start.');
+      } else if (confirm === 'unpublish') {
+        refresh(examRandomizerService.unpublishExam());
+        log('Unpublished examination', 'Returned to draft', 'warning');
+        notify('Examination returned to draft and hidden from candidates.', 'info');
+      } else if (confirm === 'reset') {
+        refresh(examRandomizerService.resetToDefaults());
+        log('Reset examination to the standard question set');
+        notify('Reset to the standard 25 questions and regenerated patterns.', 'info');
+      }
+    } catch (error) {
+      notify(error.message || 'The action could not be completed.', 'error');
+    }
+    setConfirm(null);
+  };
+
+  const saveConfiguration = (event) => {
+    event.preventDefault();
+    setConfigError('');
+    try {
+      refresh(examRandomizerService.updateExamMeta(configForm));
+      log('Updated examination configuration');
+      notify('Examination configuration saved.');
+    } catch (error) {
+      setConfigError(error.message);
+    }
+  };
+
+  const confirmCopy = {
+    regenerate: {
+      title: 'Regenerate all 10 patterns?',
+      tone: 'warning',
+      label: 'Regenerate patterns',
+      text: examState.isPublished
+        ? 'The examination is live. New attempts will use the new patterns; candidates already writing keep their saved paper.'
+        : 'Question order and option order are re-randomised for patterns A–J.',
+    },
+    publish: { title: 'Publish this examination?', tone: 'primary', label: 'Publish examination', text: 'Eligible candidates will see the examination and can start it. Configuration is locked while it is published.' },
+    unpublish: { title: 'Return the examination to draft?', tone: 'warning', label: 'Unpublish', text: 'Candidates will no longer be able to start it. Attempts already in progress continue on their saved paper.' },
+    reset: { title: 'Reset to the standard question set?', tone: 'danger', label: 'Reset question set', text: 'The master set returns to the standard 25 verified questions and patterns are regenerated. The examination returns to its default published state.' },
+  }[confirm] || {};
+
+  const tabs = [
+    { id: 'configuration', label: 'Configuration' },
+    { id: 'questions', label: 'Question set', count: examState.masterQuestions?.length || 0 },
+    { id: 'patterns', label: 'Pattern preview', count: Object.keys(examState.patterns).length },
+    { id: 'verification', label: 'Verification' },
+    { id: 'candidates', label: 'Candidate allocation', count: roster.length },
+  ];
 
   return (
-    <div className="space-y-6 text-slate-800 font-sans">
-      {/* ── Toast Notification ────────────────────────────────────────────── */}
-      {notification && (
-        <div
-          className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-xs border text-xs shadow-lg transition-all animate-in fade-in slide-in-from-top-2 ${
-            notification.type === 'success'
-              ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
-              : 'bg-blue-50 text-blue-900 border-blue-300'
-          }`}
-        >
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span className="font-medium">{notification.msg}</span>
-        </div>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Examinations"
+        title={meta.courseTitle}
+        meta={(
+          <>
+            <span className="rounded-sm border border-slate-200 bg-white px-2 py-0.5 font-mono font-bold text-[#1E3A5F]">{meta.courseCode}</span>
+            <StatusBadge status={examState.isPublished ? 'Published' : 'Draft'} />
+            <span>{meta.semester}</span>
+          </>
+        )}
+        actions={(
+          <>
+            <Button variant="secondary" icon={RefreshCw} onClick={() => setConfirm('regenerate')}>Regenerate patterns</Button>
+            {examState.isPublished ? (
+              <Button variant="secondary" icon={Lock} onClick={() => setConfirm('unpublish')}>Unpublish</Button>
+            ) : (
+              <Button variant="success" icon={Send} disabled={!verification?.isValid} onClick={() => setConfirm('publish')}>Publish examination</Button>
+            )}
+          </>
+        )}
+      />
+
+      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 lg:grid-cols-5" aria-label="Examination status">
+        {[
+          ['Status', examState.isPublished ? 'Published' : 'Draft', examState.isPublished ? `Since ${formatDateTime(examState.publishedAt)}` : 'Hidden from candidates'],
+          ['Patterns', `${Object.keys(examState.patterns).length} × 25`, verification?.isValid ? 'Integrity verified' : 'Verification failed'],
+          ['Total marks', meta.totalMarks, meta.negativeMarking ? 'Negative marking on' : 'No negative marking'],
+          ['Duration', `${meta.durationMinutes} min`, meta.examDate],
+          ['Attempts', `${activeAttempts} / ${submittedAttempts}`, 'In progress / submitted'],
+        ].map(([label, value, hint]) => (
+          <div key={label} className="bg-white p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+            <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{value}</p>
+            <p className="text-[11px] text-slate-500">{hint}</p>
+          </div>
+        ))}
+      </section>
+
+      {!verification?.isValid && (
+        <Alert tone="danger" title="Pattern verification failed">Regenerate the patterns before publishing this examination.</Alert>
       )}
 
-      {/* ── Page Header ───────────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="bg-[#1E3A5F] text-white font-mono text-[11px] font-bold px-2 py-0.5 rounded-xs">
-              {examState.meta.courseCode}
-            </span>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">
-              Question & Option Randomization Console
-            </h1>
+      <div>
+        <Tabs tabs={tabs} value={activeTab} onChange={setActiveTab} label="Examination sections" />
+
+        <TabPanel id="configuration" className={activeTab === 'configuration' ? 'pt-5' : 'hidden'}>
+          <div className="grid gap-6 lg:grid-cols-3">
+            <Card className="lg:col-span-2" title="Examination configuration" subtitle="Shown to candidates on the instruction screen.">
+              {examState.isPublished && (
+                <Alert tone="info" className="mb-4" title="Configuration is locked while published">
+                  Unpublish the examination to make changes. Candidates already writing keep their own copy of these settings.
+                </Alert>
+              )}
+              {configError && <Alert tone="danger" className="mb-4">{configError}</Alert>}
+              <form onSubmit={saveConfiguration} className="space-y-4">
+                <fieldset disabled={examState.isPublished} className="grid gap-4 sm:grid-cols-2">
+                  <InputField label="Course code" value={meta.courseCode} disabled helperText="Fixed: used in paper codes (e.g. 22CS601-A)" />
+                  <InputField label="Course title" required value={configForm.courseTitle} onChange={(e) => setConfigForm({ ...configForm, courseTitle: e.target.value })} />
+                  <InputField label="Semester / programme" value={configForm.semester} onChange={(e) => setConfigForm({ ...configForm, semester: e.target.value })} />
+                  <InputField label="Examination date" value={configForm.examDate} onChange={(e) => setConfigForm({ ...configForm, examDate: e.target.value })} helperText="As printed on hall tickets" />
+                  <InputField label="Duration (minutes)" type="number" min="5" max="300" required value={configForm.durationMinutes} onChange={(e) => setConfigForm({ ...configForm, durationMinutes: e.target.value })} />
+                  <InputField label="Questions per paper" value="25 (fixed)" disabled />
+                  <div className="sm:col-span-2">
+                    <label htmlFor="exam-instructions" className="mb-1 block text-xs font-medium text-slate-800">Candidate instructions <span className="text-red-600">*</span></label>
+                    <textarea
+                      id="exam-instructions"
+                      rows={7}
+                      value={configForm.instructions}
+                      onChange={(e) => setConfigForm({ ...configForm, instructions: e.target.value })}
+                      className="w-full rounded-sm border border-slate-300 px-3 py-2 text-sm leading-relaxed focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F] disabled:bg-slate-100 disabled:text-slate-500"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-500">One instruction per line.</p>
+                  </div>
+                </fieldset>
+                {!examState.isPublished && (
+                  <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+                    <Button variant="secondary" onClick={() => setConfigForm(metaToForm(meta))}>Discard changes</Button>
+                    <Button type="submit" icon={Save}>Save configuration</Button>
+                  </div>
+                )}
+              </form>
+            </Card>
+            <Card title="Marking scheme" subtitle="Derived from the selected questions">
+              <dl className="divide-y divide-slate-100 text-xs">
+                {[
+                  ['Questions', meta.totalQuestions],
+                  ['Marks per question', meta.marksPerQuestion ?? 'Varies by question'],
+                  ['Total marks', meta.totalMarks],
+                  ['Negative marking', meta.negativeMarking ? 'Yes, per question' : 'No'],
+                  ['Pass threshold', '40%'],
+                  ['Paper patterns', '10 (A–J)'],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-4 py-2.5">
+                    <dt className="text-slate-500">{k}</dt>
+                    <dd className="font-semibold text-slate-900 tabular-nums">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </Card>
           </div>
-          <p className="text-xs text-slate-500 mt-1">
-            {examState.meta.courseTitle} &bull; {examState.meta.institution}
-          </p>
-        </div>
+        </TabPanel>
 
-        {/* Global Controls */}
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={handleRegenerate}
-            className="flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-semibold px-3 py-2 rounded-xs transition-colors cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
-            <span>Regenerate 10 Patterns</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleTogglePublish}
-            className={`flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-xs transition-colors cursor-pointer shadow-xs ${
-              examState.isPublished
-                ? 'bg-amber-600 hover:bg-amber-700 text-white'
-                : 'bg-emerald-700 hover:bg-emerald-800 text-white'
-            }`}
-          >
-            {examState.isPublished ? (
-              <>
-                <Lock className="w-3.5 h-3.5" />
-                <span>Unpublish (Set Draft)</span>
-              </>
-            ) : (
-              <>
-                <Send className="w-3.5 h-3.5" />
-                <span>Publish 10 Patterns</span>
-              </>
+        <TabPanel id="questions" className={activeTab === 'questions' ? 'pt-5' : 'hidden'}>
+          <Card
+            title="Master question set"
+            subtitle="All 10 patterns are permutations of these 25 questions."
+            bodyClassName="p-0"
+            action={(
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="secondary" icon={showAnswerKey ? EyeOff : Eye} onClick={() => setShowAnswerKey((v) => !v)}>{showAnswerKey ? 'Hide key' : 'Show key'}</Button>
+                <Button size="sm" variant="secondary" icon={RotateCcw} onClick={() => setConfirm('reset')}>Reset to standard</Button>
+                <Button size="sm" onClick={() => navigate('/admin/questions')}>Change in Question Bank</Button>
+              </div>
             )}
-          </button>
-        </div>
-      </div>
+          >
+            <Table className="rounded-none border-x-0 border-b-0">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12">#</TableHead>
+                  <TableHead>Question</TableHead>
+                  <TableHead className="hidden md:table-cell">Topic</TableHead>
+                  <TableHead align="center">Marks</TableHead>
+                  {showAnswerKey && <TableHead>Key</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(examState.masterQuestions || []).map((q, index) => (
+                  <TableRow key={q.id}>
+                    <TableCell className="font-mono text-slate-500">{index + 1}</TableCell>
+                    <TableCell>
+                      <p className="text-[13px] text-slate-900">{q.text}</p>
+                      <p className="mt-0.5 font-mono text-[10px] text-slate-400">Bank ID {q.id}</p>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">{q.topic || '—'}</TableCell>
+                    <TableCell align="center" className="tabular-nums">{q.marks ?? meta.marksPerQuestion}</TableCell>
+                    {showAnswerKey && (
+                      <TableCell>
+                        <span className="font-semibold text-emerald-800">{LETTERS[q.correctOption]}.</span>{' '}
+                        <span className="text-slate-600">{q.options[q.correctOption]}</span>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        </TabPanel>
 
-      {/* ── Status Metrics Bar (Per Core Specification) ────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="bg-white border border-slate-200 p-3.5 rounded-xs">
-          <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-            Master Questions
-          </p>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono text-[#1E3A5F]">
-              {examState.masterQuestions?.length || 25}
-            </span>
-            <span className="text-[11px] text-slate-400">MCQs verified</span>
-          </div>
-        </div>
-
-        <div className="bg-white border border-slate-200 p-3.5 rounded-xs">
-          <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-            Generated Patterns
-          </p>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono text-emerald-700">
-              {Object.keys(examState.patterns).length}
-            </span>
-            <span className="text-[11px] text-slate-400">Patterns (A – J)</span>
-          </div>
-        </div>
-
-        <div className="bg-white border border-slate-200 p-3.5 rounded-xs">
-          <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-            Questions / Pattern
-          </p>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono text-slate-900">
-              25
-            </span>
-            <span className="text-[11px] text-slate-400">All questions included</span>
-          </div>
-        </div>
-
-        <div className="bg-white border border-slate-200 p-3.5 rounded-xs">
-          <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-            Publication Status
-          </p>
-          <div className="mt-1 flex items-center gap-2">
-            <span
-              className={`inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-xs ${
-                examState.isPublished
-                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                  : 'bg-amber-50 text-amber-800 border border-amber-200'
-              }`}
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  examState.isPublished ? 'bg-emerald-600 animate-pulse' : 'bg-amber-500'
-                }`}
-              />
-              {examState.isPublished ? 'Published & Live' : 'Draft (Hidden from Students)'}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Sub-navigation Tabs ────────────────────────────────────────────── */}
-      <div className="border-b border-slate-200 flex items-center gap-1 text-xs font-semibold">
-        <button
-          type="button"
-          onClick={() => setActiveTab('generator')}
-          className={`pb-2.5 px-3 border-b-2 cursor-pointer transition-colors ${
-            activeTab === 'generator'
-              ? 'border-[#1E3A5F] text-[#1E3A5F]'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          Pattern Generator & Preview (10 Sets)
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('master')}
-          className={`pb-2.5 px-3 border-b-2 cursor-pointer transition-colors ${
-            activeTab === 'master'
-              ? 'border-[#1E3A5F] text-[#1E3A5F]'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          Master Question Bank (25 MCQs)
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('roster')}
-          className={`pb-2.5 px-3 border-b-2 cursor-pointer transition-colors ${
-            activeTab === 'roster'
-              ? 'border-[#1E3A5F] text-[#1E3A5F]'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          Candidate Pattern Assignments
-        </button>
-      </div>
-
-      {/* ═══════════════════════════════════════════════════════════════════════
-          TAB 1: PATTERN GENERATOR & PREVIEWS
-      ═══════════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'generator' && (
-        <div className="space-y-4">
-          {/* Pattern Selector Bar & View Toggle */}
-          <div className="bg-white border border-slate-200 p-3 rounded-xs flex flex-wrap items-center justify-between gap-3">
-            {/* Pattern Pills: Pattern A through Pattern J */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs font-bold text-slate-600 mr-1 uppercase tracking-wider text-[11px]">
-                Pattern:
-              </span>
+        <TabPanel id="patterns" className={activeTab === 'patterns' ? 'space-y-4 pt-5' : 'hidden'}>
+          <div className="flex flex-col gap-3 rounded-sm border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div role="radiogroup" aria-label="Pattern" className="flex flex-wrap gap-1">
               {PATTERN_LABELS.map((label) => (
                 <button
                   key={label}
                   type="button"
-                  onClick={() => {
-                    setSelectedPattern(label);
-                    setViewMode('preview');
-                  }}
-                  className={`w-8 h-8 rounded-xs text-xs font-mono font-bold transition-all cursor-pointer ${
-                    selectedPattern === label && viewMode === 'preview'
-                      ? 'bg-[#1E3A5F] text-white shadow-xs scale-105'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
+                  role="radio"
+                  aria-checked={selectedPattern === label}
+                  onClick={() => setSelectedPattern(label)}
+                  className={`h-9 w-9 rounded-sm border font-mono text-xs font-bold ${selectedPattern === label ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
                 >
                   {label}
                 </button>
               ))}
             </div>
-
-            {/* View Mode & Answer Key Toggles */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setViewMode(viewMode === 'preview' ? 'matrix' : 'preview')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-xs border cursor-pointer transition-colors ${
-                  viewMode === 'matrix'
-                    ? 'bg-[#1E3A5F] text-white border-[#1E3A5F]'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                <TableIcon className="w-3.5 h-3.5" />
-                <span>Permutation Matrix</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowAnswerKey(!showAnswerKey)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-xs border cursor-pointer transition-colors ${
-                  showAnswerKey
-                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                {showAnswerKey ? <Eye className="w-3.5 h-3.5 text-emerald-700" /> : <EyeOff className="w-3.5 h-3.5 text-slate-400" />}
-                <span>{showAnswerKey ? 'Answer Key Visible' : 'Show Answer Key'}</span>
-              </button>
-            </div>
+            <Button size="sm" variant={showAnswerKey ? 'outline' : 'secondary'} icon={showAnswerKey ? EyeOff : Eye} onClick={() => setShowAnswerKey((v) => !v)}>
+              {showAnswerKey ? 'Hide answer key' : 'Show answer key'}
+            </Button>
           </div>
 
-          {/* ── VIEW 1: PATTERN PREVIEW (25 Questions) ─────────────────────── */}
-          {viewMode === 'preview' && currentPatternData && (
-            <div className="bg-white border border-slate-200 rounded-xs overflow-hidden">
-              {/* Pattern Header Strip */}
-              <div className="bg-slate-50 border-b border-slate-200 px-5 py-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-slate-900 text-sm">
-                      {currentPatternData.patternLabel}
-                    </span>
-                    <span className="font-mono text-xs text-[#1E3A5F] bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-xs">
-                      Paper Code: {currentPatternData.paperCode}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    Sequence Order: First Question is Q{currentPatternData.questions[0].originalId} &bull; Last Question is Q{currentPatternData.questions[24].originalId}
-                  </p>
-                </div>
-
-                <div className="text-right text-xs text-slate-500">
-                  <span>Questions in Pattern: <strong className="text-slate-800">25</strong></span>
-                  <span className="mx-2">&bull;</span>
-                  <span>Max Marks: <strong className="text-slate-800">{examState.meta.totalMarks}</strong></span>
-                </div>
-              </div>
-
-              {/* Questions List for this Pattern */}
-              <div className="divide-y divide-slate-100 max-h-[700px] overflow-y-auto p-2">
+          {currentPatternData && (
+            <Card
+              title={`${currentPatternData.patternLabel} · ${currentPatternData.paperCode}`}
+              subtitle={`Opens with bank question ${currentPatternData.questions[0].originalId}, ends with ${currentPatternData.questions[24].originalId}`}
+              bodyClassName="p-0"
+            >
+              <ol className="divide-y divide-slate-100">
                 {currentPatternData.questions.map((q, idx) => {
                   const correctIdx = currentPatternData.answerKey[q.originalId];
                   return (
-                    <div key={q.originalId} className="p-4 space-y-2 hover:bg-slate-50/50 transition-colors">
+                    <li key={q.originalId} className="px-5 py-4">
                       <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-2">
-                          <span className="font-mono font-bold text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-xs border border-slate-200 shrink-0">
-                            Q{idx + 1}
-                          </span>
-                          <p className="text-xs font-semibold text-slate-900 leading-relaxed">
-                            {q.text}
-                          </p>
-                        </div>
-                        <span className="text-[10px] font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-xs border shrink-0">
-                          Master ID #{q.originalId}
-                        </span>
+                        <p className="text-[13px] font-medium text-slate-900">
+                          <span className="mr-2 font-mono text-slate-500">Q{idx + 1}.</span>{q.text}
+                        </p>
+                        <span className="shrink-0 font-mono text-[10px] text-slate-400">Bank {q.originalId}</span>
                       </div>
-
-                      {/* Shuffled Options A, B, C, D */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 pl-8">
-                        {q.options.map((optText, optIdx) => {
+                      <ol className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                        {q.options.map((opt, optIdx) => {
                           const isCorrect = showAnswerKey && optIdx === correctIdx;
                           return (
-                            <div
-                              key={optIdx}
-                              className={`p-2.5 rounded-xs text-xs border transition-colors ${
-                                isCorrect
-                                  ? 'bg-emerald-50 border-emerald-300 text-emerald-900 font-semibold'
-                                  : 'bg-white border-slate-200 text-slate-700'
-                              }`}
-                            >
-                              <span className="font-mono font-bold text-slate-400 mr-2 text-[11px]">
-                                {String.fromCharCode(65 + optIdx)}.
-                              </span>
-                              <span>{optText}</span>
-                              {isCorrect && (
-                                <span className="ml-2 text-[10px] font-bold text-emerald-700 font-mono">
-                                  ✓ CORRECT
-                                </span>
-                              )}
-                            </div>
+                            <li key={optIdx} className={`flex items-center gap-2 rounded-sm border px-3 py-1.5 text-xs ${isCorrect ? 'border-emerald-300 bg-emerald-50 font-semibold text-emerald-900' : 'border-slate-200 text-slate-700'}`}>
+                              <span className="font-mono text-[11px] text-slate-500">{LETTERS[optIdx]}.</span>
+                              <span className="flex-1">{opt}</span>
+                              {isCorrect && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-label="Correct answer" />}
+                            </li>
                           );
                         })}
-                      </div>
-                    </div>
+                      </ol>
+                    </li>
                   );
                 })}
-              </div>
-            </div>
+              </ol>
+            </Card>
           )}
+        </TabPanel>
 
-          {/* ── VIEW 2: PERMUTATION MATRIX & VALIDATION ────────────────────── */}
-          {viewMode === 'matrix' && (
-            <div className="bg-white border border-slate-200 rounded-xs p-5 space-y-5">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                  10-Pattern Permutation & Integrity Matrix
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Verifies that every pattern has an independently randomized sequence and option mapping.
-                </p>
-              </div>
+        <TabPanel id="verification" className={activeTab === 'verification' ? 'space-y-6 pt-5' : 'hidden'}>
+          <Card
+            title="Integrity checks"
+            subtitle={verification ? `Last verified ${formatDateTime(verification.timestamp)}` : 'Not verified yet'}
+            action={verification?.isValid ? <StatusBadge status="Verified">All checks passed</StatusBadge> : <StatusBadge status="Failed">Checks failed</StatusBadge>}
+          >
+            <ul className="grid gap-2 sm:grid-cols-2">
+              {Object.entries(CHECK_LABELS).map(([key, label]) => {
+                const ok = verification?.checks?.[key];
+                const Icon = ok ? CheckCircle2 : XCircle;
+                return (
+                  <li key={key} className="flex items-center gap-2 rounded-sm border border-slate-200 px-3 py-2 text-xs">
+                    <Icon className={`h-4 w-4 shrink-0 ${ok ? 'text-emerald-600' : 'text-rose-600'}`} aria-hidden="true" />
+                    <span className="text-slate-800">{label}</span>
+                    <span className="sr-only">{ok ? 'passed' : 'failed'}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
 
-              {/* Verification Checklist */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xs flex items-center gap-2.5">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <div className="text-xs">
-                    <p className="font-bold text-emerald-950">10 / 10 Patterns Generated</p>
-                    <p className="text-emerald-700 text-[11px]">Pattern A through Pattern J</p>
-                  </div>
-                </div>
-
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xs flex items-center gap-2.5">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <div className="text-xs">
-                    <p className="font-bold text-emerald-950">25 Questions in Each Set</p>
-                    <p className="text-emerald-700 text-[11px]">100% question content parity</p>
-                  </div>
-                </div>
-
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xs flex items-center gap-2.5">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <div className="text-xs">
-                    <p className="font-bold text-emerald-950">Unique Question Sequences</p>
-                    <p className="text-emerald-700 text-[11px]">Zero sequence collisions detected</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Matrix Table: Showing Question ID position across all 10 patterns */}
-              <div className="overflow-x-auto border border-slate-200 rounded-xs">
-                <table className="w-full text-xs text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-100 border-b border-slate-200 font-bold text-slate-700">
-                      <th className="py-2.5 px-3">Question Slot</th>
-                      {PATTERN_LABELS.map((label) => (
-                        <th key={label} className="py-2.5 px-2 text-center font-mono">
-                          Pat {label}
-                        </th>
-                      ))}
+          <Card title="Permutation matrix" subtitle="Bank question shown at each position of every pattern" bodyClassName="p-0" action={<Grid3x3 className="h-4 w-4 text-slate-400" aria-hidden="true" />}>
+            <div className="max-h-[32rem] overflow-auto">
+              <table className="w-full min-w-[720px] text-center text-xs">
+                <thead className="sticky top-0 bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="sticky left-0 bg-slate-50 px-3 py-2 text-left">Position</th>
+                    {PATTERN_LABELS.map((label) => <th key={label} className="px-2 py-2 font-mono">{label}</th>)}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-mono">
+                  {Array.from({ length: 25 }, (_, slotIdx) => (
+                    <tr key={slotIdx} className="hover:bg-slate-50">
+                      <td className="sticky left-0 bg-white px-3 py-1.5 text-left text-slate-500">Q{slotIdx + 1}</td>
+                      {PATTERN_LABELS.map((label) => {
+                        const qId = examState.patterns[label]?.questions[slotIdx]?.originalId;
+                        return <td key={label} className="px-2 py-1.5 text-slate-800" title={masterById[qId]?.text}>{qId}</td>;
+                      })}
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                    {Array.from({ length: 25 }, (_, slotIdx) => (
-                      <tr key={slotIdx} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-2 px-3 font-sans font-semibold text-slate-800">
-                          Slot #{slotIdx + 1}
-                        </td>
-                        {PATTERN_LABELS.map((label) => {
-                          const qId = examState.patterns[label]?.questions[slotIdx]?.originalId;
-                          return (
-                            <td key={label} className="py-2 px-2 text-center text-slate-600">
-                              Q{qId}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ═══════════════════════════════════════════════════════════════════════
-          TAB 2: MASTER QUESTION BANK (25 MCQs)
-      ═══════════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'master' && (
-        <div className="bg-white border border-slate-200 rounded-xs p-5 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-                Master Question Bank (25 Base Questions)
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                All 10 examination patterns are permuted from this validated master bank.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleResetDefaults}
-                className="text-xs text-[#1E3A5F] hover:underline font-semibold cursor-pointer"
-              >
-                Reset to Standard Verified 25 MCQs
-              </button>
-            </div>
-          </div>
-
-          <div className="divide-y divide-slate-100">
-            {examState.masterQuestions.map((q, idx) => (
-              <div key={q.id} className="py-3.5 space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-start gap-2 text-xs font-semibold text-slate-900">
-                    <span className="font-mono text-[#1E3A5F] font-bold">Q{idx + 1}.</span>
-                    <span>{q.text}</span>
-                  </div>
-                  <span className="text-[11px] font-mono font-medium text-slate-400 shrink-0">
-                    ID #{q.id}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pl-6">
-                  {q.options.map((opt, optIdx) => (
-                    <div
-                      key={optIdx}
-                      className={`p-2 rounded-xs text-xs border ${
-                        optIdx === q.correctOption
-                          ? 'bg-emerald-50 border-emerald-300 text-emerald-950 font-semibold'
-                          : 'bg-slate-50 border-slate-200 text-slate-600'
-                      }`}
-                    >
-                      <span className="font-mono font-bold mr-1.5 text-slate-400">
-                        {String.fromCharCode(65 + optIdx)}.
-                      </span>
-                      {opt}
-                      {optIdx === q.correctOption && (
-                        <span className="ml-2 text-[10px] font-bold text-emerald-700 font-mono">
-                          (Master Key)
-                        </span>
-                      )}
-                    </div>
                   ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </TabPanel>
 
-      {/* ═══════════════════════════════════════════════════════════════════════
-          TAB 3: CANDIDATE PATTERN ASSIGNMENTS
-      ═══════════════════════════════════════════════════════════════════════ */}
-      {activeTab === 'roster' && (
-        <div className="bg-white border border-slate-200 rounded-xs p-5 space-y-4">
-          <div>
-            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide">
-              Automated Candidate Pattern Allocations
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Each registered candidate is deterministically assigned one of the 10 patterns. Students cannot choose or change their pattern.
-            </p>
+        <TabPanel id="candidates" className={activeTab === 'candidates' ? 'space-y-6 pt-5' : 'hidden'}>
+          <div className="grid gap-6 lg:grid-cols-3">
+            <Card title="Pattern distribution" subtitle="Eligible candidates per pattern">
+              <ul className="space-y-1.5">
+                {distribution.map((d) => (
+                  <li key={d.label} className="flex items-center gap-3 text-xs">
+                    <span className="w-6 font-mono font-bold text-slate-700">{d.label}</span>
+                    <span className="h-2 flex-1 bg-slate-100"><span className="block h-2 bg-[#1E3A5F]" style={{ width: `${(d.count / maxDist) * 100}%` }} /></span>
+                    <span className="w-6 text-right tabular-nums text-slate-600">{d.count}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-4 text-[11px] leading-relaxed text-slate-500">Patterns are assigned automatically from each candidate's USN. Candidates cannot choose or change their pattern.</p>
+            </Card>
+            <Card
+              className="lg:col-span-2"
+              title="Candidate allocation"
+              subtitle="Assigned pattern and attempt status"
+              bodyClassName="p-0"
+              action={<Link to="/admin/students" className="text-xs font-semibold text-[#1E3A5F] hover:underline">Manage candidates</Link>}
+            >
+              <Table className="rounded-none border-x-0 border-b-0">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>USN</TableHead>
+                    <TableHead>Candidate</TableHead>
+                    <TableHead>Eligibility</TableHead>
+                    <TableHead>Pattern</TableHead>
+                    <TableHead>Attempt</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {roster.map((s) => {
+                    const attempt = attemptByStudent[s.usn];
+                    return (
+                      <TableRow key={s.usn}>
+                        <TableCell className="font-mono font-semibold text-[#1E3A5F]">{s.usn}</TableCell>
+                        <TableCell>{s.name}<span className="block text-[11px] text-slate-500">Sem {s.semester} · Sec {s.section}</span></TableCell>
+                        <TableCell><StatusBadge status={s.status} size="sm" /></TableCell>
+                        <TableCell className="font-mono">{s.status === 'Eligible' ? `${assignPatternToStudent(s.usn)} · ${meta.courseCode}-${assignPatternToStudent(s.usn)}` : '—'}</TableCell>
+                        <TableCell>
+                          {attempt ? <StatusBadge status={attempt.status === 'active' ? 'In progress' : 'Submitted'} size="sm" /> : <span className="text-[11px] text-slate-400">Not started</span>}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </Card>
           </div>
+        </TabPanel>
+      </div>
 
-          <div className="overflow-x-auto border border-slate-200 rounded-xs">
-            <table className="w-full text-xs text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-100 border-b border-slate-200 font-bold text-slate-700">
-                  <th className="py-2.5 px-4">USN</th>
-                  <th className="py-2.5 px-4">Candidate Name</th>
-                  <th className="py-2.5 px-4">Department & Sem</th>
-                  <th className="py-2.5 px-4 text-center">Assigned Pattern</th>
-                  <th className="py-2.5 px-4 text-center">Paper Code</th>
-                  <th className="py-2.5 px-4 text-right">Access Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {[
-                  { usn: '1DA22CS001', name: 'Dr. AIT Candidate (Alex Chen)', dept: 'CSE • 6th Sem' },
-                  { usn: '1DA22CS002', name: 'Bhavana K.', dept: 'CSE • 6th Sem' },
-                  { usn: '1DA22CS003', name: 'Chirag M. Gowda', dept: 'CSE • 6th Sem' },
-                  { usn: '1DA22CS004', name: 'Deepa R. Rao', dept: 'CSE • 6th Sem' },
-                  { usn: '1DA22CS005', name: 'Eshwar S.', dept: 'CSE • 6th Sem' },
-                  { usn: '1DA22CS006', name: 'Farhan Akhtar', dept: 'CSE • 6th Sem' },
-                  { usn: '1DA22CS007', name: 'Gowri Shankar', dept: 'CSE • 6th Sem' },
-                  { usn: '1DA22CS008', name: 'Harish Babu', dept: 'CSE • 6th Sem' },
-                  { usn: '1DA22CS009', name: 'Isha Nambiar', dept: 'CSE • 6th Sem' },
-                  { usn: '1DA22CS010', name: 'Jayant V.', dept: 'CSE • 6th Sem' },
-                ].map((s) => {
-                  const patLabel = assignPatternToStudent(s.usn);
-                  return (
-                    <tr key={s.usn} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-2.5 px-4 font-mono font-bold text-[#1E3A5F]">
-                        {s.usn}
-                      </td>
-                      <td className="py-2.5 px-4 font-medium text-slate-900">
-                        {s.name}
-                      </td>
-                      <td className="py-2.5 px-4 text-slate-600">
-                        {s.dept}
-                      </td>
-                      <td className="py-2.5 px-4 text-center">
-                        <span className="font-mono font-bold text-xs bg-slate-100 text-[#1E3A5F] border border-slate-300 px-2.5 py-0.5 rounded-xs">
-                          Pattern {patLabel || 'Unassigned'}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-4 text-center font-mono text-[11px] text-slate-500">
-                        {patLabel ? `22CS601-${patLabel}` : 'No student identifier'}
-                      </td>
-                      <td className="py-2.5 px-4 text-right">
-                        <span
-                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-xs border ${
-                            examState.isPublished
-                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                              : 'bg-slate-100 text-slate-500 border-slate-200'
-                          }`}
-                        >
-                          {examState.isPublished ? 'Live & Allocated' : 'Awaiting Publish'}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ── Confirmation Modal: Regenerate Published Patterns ─────────────── */}
-      <Modal
-        isOpen={showRegenerateConfirm}
-        onClose={() => setShowRegenerateConfirm(false)}
-        title="Confirm Pattern Regeneration"
-        subtitle="Examination is currently Published"
-        maxWidth="max-w-md"
-        footer={null}
-      >
-        <div className="space-y-4 text-xs">
-          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xs flex items-start gap-2 text-amber-900">
-            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-            <p>
-              This examination is currently <strong>Published</strong>. Regenerating patterns will re-shuffle the 10 paper patterns for all students.
-            </p>
-          </div>
-          <p className="text-slate-600">
-            Are you sure you want to regenerate all 10 patterns (Pattern A through Pattern J)?
+      <Card bodyClassName="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[#1E3A5F]" aria-hidden="true" />
+          <p className="text-xs leading-relaxed text-slate-600">
+            Every attempt stores an immutable copy of its paper and answer key when it starts. Regenerating, editing or unpublishing never changes a paper that a candidate is already writing.
           </p>
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setShowRegenerateConfirm(false)}
-              className="px-3.5 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xs cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleRegenerate}
-              className="bg-[#1E3A5F] hover:bg-[#152A45] text-white text-xs font-semibold px-4 py-2 rounded-xs cursor-pointer"
-            >
-              Yes, Regenerate Patterns
-            </button>
-          </div>
         </div>
-      </Modal>
+      </Card>
 
-      {/* ── Confirmation Modal: Publish Examination ───────────────────────── */}
-      <Modal
-        isOpen={showPublishConfirm}
-        onClose={() => setShowPublishConfirm(false)}
-        title="Publish Examination Patterns"
-        subtitle="22CS601: Software Engineering & Cloud Architecture"
-        maxWidth="max-w-md"
-        footer={null}
-      >
-        <div className="space-y-4 text-xs">
-          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xs flex items-start gap-2 text-emerald-900">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            <p>
-              Publishing will make the 10 examination patterns active. Each assigned student will automatically receive their designated pattern.
-            </p>
-          </div>
-          <ul className="list-disc list-inside space-y-1 text-slate-600 pl-1 text-[11px]">
-            <li>Students will see the exam in their "My Examinations" dashboard.</li>
-            <li>Each student will receive a unique pattern (Pattern A to J).</li>
-            <li>Correct answers remain confidential and are never exposed to examinees.</li>
-          </ul>
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setShowPublishConfirm(false)}
-              className="px-3.5 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xs cursor-pointer"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleTogglePublish}
-              className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold px-4 py-2 rounded-xs cursor-pointer"
-            >
-              Confirm & Publish
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <ConfirmDialog
+        isOpen={Boolean(confirm)}
+        onClose={() => setConfirm(null)}
+        onConfirm={runConfirmed}
+        title={confirmCopy.title}
+        tone={confirmCopy.tone}
+        confirmLabel={confirmCopy.label}
+        description={confirmCopy.text}
+      />
     </div>
   );
 }

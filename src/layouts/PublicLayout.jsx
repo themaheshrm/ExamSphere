@@ -2,6 +2,8 @@ import React from 'react';
 import { Outlet, Link } from 'react-router-dom';
 import { Layers, ArrowRight } from 'lucide-react';
 
+const COPYRIGHT_YEAR = new Date().getFullYear();
+
 export default function PublicLayout() {
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
@@ -43,7 +45,7 @@ export default function PublicLayout() {
       {/* Public Footer */}
       <footer className="border-t border-slate-200 bg-white py-6 text-center text-xs text-slate-500">
         <div className="mx-auto max-w-7xl px-4 sm:px-6">
-          <p>© {new Date().getFullYear()} ExamSphere CBT Platform. Engineered for Scalable Assessments.</p>
+          <p>© {COPYRIGHT_YEAR} ExamSphere CBT Platform. Engineered for Scalable Assessments.</p>
         </div>
       </footer>
     </div>

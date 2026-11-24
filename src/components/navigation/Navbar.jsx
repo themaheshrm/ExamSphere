@@ -1,248 +1,166 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import {
-  Menu,
-  Bell,
-  User,
-  LogOut,
-  ChevronDown,
-  CheckCircle2,
-  Calendar,
-  ExternalLink,
-} from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Bell, ChevronDown, LogOut, Menu, UserCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { USER_ROLES } from '../../utils/constants';
-import { studentInfo, notifications } from '../../data/studentMockData';
+import { INSTITUTION, NOTIFICATION_PATHS, PROFILE_PATHS, ROLE_LABELS, USER_ROLES } from '../../utils/constants';
+import { notificationService } from '../../services/notificationService';
+import { useDataVersion } from '../../utils/useDataVersion';
+import { formatRelative } from '../../utils/format';
 
-export default function Navbar({ onToggleSidebar }) {
+const TONE_DOT = {
+  info: 'bg-[#1E3A5F]', success: 'bg-emerald-600', warning: 'bg-amber-500', danger: 'bg-rose-600', neutral: 'bg-slate-400',
+};
+
+function useDismiss(ref, open, setOpen) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [ref, open, setOpen]);
+}
+
+export default function Navbar({ onToggleSidebar, sidebarOpen }) {
   const navigate = useNavigate();
-  const location = useLocation();
-  const { user, isAuthenticated, logout } = useAuth();
-
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const { user, role, logout } = useAuth();
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const profileRef = useRef(null);
   const notifRef = useRef(null);
+  useDismiss(profileRef, profileOpen, setProfileOpen);
+  useDismiss(notifRef, notifOpen, setNotifOpen);
+  useDataVersion(); // re-render when notification sources change
 
-  const isStudentPortal =
-    location.pathname.startsWith('/student') || user?.role === USER_ROLES.STUDENT;
+  const notifications = notificationService.list(user);
+  const unread = notifications.filter((n) => !n.read).length;
 
-  const displayName = user?.name || studentInfo.name;
-  const displayUsn = user?.usn || user?.identifier || studentInfo.usn;
+  const initials = (user?.name || 'ES').split(/\s+/).filter(Boolean).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
+  const identifier = user?.usn || user?.staffId || user?.email || '';
 
   const handleLogout = async () => {
-    setIsProfileOpen(false);
+    setProfileOpen(false);
     await logout();
     navigate('/login');
   };
 
-  // Close popups on click outside
-  useEffect(() => {
-    function handleClickOutside(e) {
-      if (profileRef.current && !profileRef.current.contains(e.target)) {
-        setIsProfileOpen(false);
-      }
-      if (notifRef.current && !notifRef.current.contains(e.target)) {
-        setIsNotificationsOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const getInitials = (name) => {
-    if (!name) return 'EX';
-    return name
-      .split(' ')
-      .map((part) => part[0])
-      .join('')
-      .slice(0, 2)
-      .toUpperCase();
+  const openNotification = (n) => {
+    notificationService.markRead(user, [n.id]);
+    setNotifOpen(false);
+    if (n.link) navigate(n.link);
   };
 
-  const unreadNotifsCount = notifications.filter((n) => n.unread).length;
-
   return (
-    <header className="sticky top-0 z-30 flex h-14 w-full items-center justify-between border-b border-slate-300 bg-white px-4 sm:px-6 shadow-2xs">
-      {/* Left: Mobile Toggle & Institutional Subtitle */}
-      <div className="flex items-center gap-3">
+    <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 sm:px-6">
+      <div className="flex min-w-0 items-center gap-3">
         <button
           type="button"
           onClick={onToggleSidebar}
-          className="rounded-xs p-1.5 text-slate-600 hover:bg-slate-100 lg:hidden focus:outline-none cursor-pointer"
-          aria-label="Toggle navigation menu"
+          aria-label="Open navigation"
+          aria-controls="app-sidebar"
+          aria-expanded={sidebarOpen}
+          className="rounded-sm p-1.5 text-slate-600 hover:bg-slate-100 lg:hidden"
         >
           <Menu className="h-5 w-5" />
         </button>
-
-        <div className="flex items-center gap-2">
-          <span className="hidden sm:inline-block font-semibold text-xs text-[#1E3A5F]">
-            Dr. Ambedkar Institute of Technology
-          </span>
-          <span className="hidden sm:inline-block text-slate-300">&bull;</span>
-          <span className="text-xs text-slate-600 font-medium">
-            {isStudentPortal ? 'Examinee CBT Console' : 'Examination Portal'}
-          </span>
+        <div className="min-w-0 leading-tight">
+          <p className="truncate text-[13px] font-semibold text-slate-900">{INSTITUTION.name}</p>
+          <p className="hidden truncate text-[11px] text-slate-500 sm:block">{INSTITUTION.office} · {ROLE_LABELS[role] || 'Examination Portal'}</p>
         </div>
       </div>
 
-      {/* Right: Academic Year, Notifications & Student Profile Menu */}
-      <div className="flex items-center gap-2.5 sm:gap-4">
-        {/* Academic Year Tag (Requirement 2) */}
-        <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-700 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-xs font-medium">
-          <span>Academic Year:</span>
-          <strong className="text-slate-900 font-semibold">2026–27</strong>
-        </div>
+      <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+        <span className="mr-1 hidden rounded-sm border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600 md:inline">
+          Academic Year <strong className="font-semibold text-slate-900">{INSTITUTION.academicYear}</strong>
+        </span>
 
-        {/* Notifications Icon with Popup (Requirement 2) */}
         <div className="relative" ref={notifRef}>
           <button
             type="button"
-            onClick={() => setIsNotificationsOpen((prev) => !prev)}
-            className="relative rounded-xs p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none cursor-pointer transition-colors"
-            aria-label="View notifications"
+            onClick={() => setNotifOpen((v) => !v)}
+            aria-haspopup="true"
+            aria-expanded={notifOpen}
+            aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`}
+            className="relative rounded-sm p-2 text-slate-600 hover:bg-slate-100"
           >
-            <Bell className="h-4.5 w-4.5" />
-            {unreadNotifsCount > 0 && (
-              <span className="absolute top-1 right-1 flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-600" />
+            <Bell className="h-[18px] w-[18px]" />
+            {unread > 0 && (
+              <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-600 px-1 text-[9px] font-bold text-white tabular-nums">
+                {unread > 9 ? '9+' : unread}
               </span>
             )}
           </button>
 
-          {/* Notifications Dropdown Panel */}
-          {isNotificationsOpen && (
-            <div className="absolute right-0 mt-2 w-80 sm:w-96 rounded-xs border border-slate-300 bg-white shadow-lg z-50 text-xs">
-              <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5 bg-slate-50">
-                <span className="font-semibold text-slate-900 uppercase tracking-wide text-[11px]">
-                  Examination Notices ({notifications.length})
-                </span>
-                <span className="text-[11px] text-emerald-800 font-medium bg-emerald-50 px-1.5 py-0.5 rounded-xs border border-emerald-200">
-                  {unreadNotifsCount} New
-                </span>
+          {notifOpen && (
+            <div className="es-fade-in fixed inset-x-3 top-14 z-50 rounded-sm border border-slate-200 bg-white shadow-lg sm:absolute sm:inset-x-auto sm:right-0 sm:top-11 sm:w-96">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5">
+                <p className="text-xs font-semibold text-slate-900">Notifications</p>
+                {unread > 0 && (
+                  <button type="button" onClick={() => notificationService.markRead(user, notifications.map((n) => n.id))} className="text-[11px] font-semibold text-[#1E3A5F] hover:underline">
+                    Mark all as read
+                  </button>
+                )}
               </div>
-
-              <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
-                {notifications.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`p-3 text-left transition-colors hover:bg-slate-50 ${
-                      item.unread ? 'bg-blue-50/40' : 'bg-white'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="font-semibold text-slate-900 text-xs">{item.title}</p>
-                      <span className="text-[10px] text-slate-400 shrink-0 font-mono">
-                        {item.time}
+              <ul className="max-h-80 divide-y divide-slate-100 overflow-y-auto">
+                {notifications.length === 0 && <li className="px-4 py-8 text-center text-xs text-slate-500">You're all caught up.</li>}
+                {notifications.slice(0, 8).map((n) => (
+                  <li key={n.id}>
+                    <button type="button" onClick={() => openNotification(n)} className={`flex w-full gap-3 px-4 py-3 text-left hover:bg-slate-50 ${n.read ? '' : 'bg-[#F7F9FC]'}`}>
+                      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${n.read ? 'bg-slate-200' : TONE_DOT[n.tone] || TONE_DOT.neutral}`} aria-hidden="true" />
+                      <span className="min-w-0">
+                        <span className={`block text-xs ${n.read ? 'font-medium text-slate-700' : 'font-semibold text-slate-900'}`}>{n.title}</span>
+                        <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-600">{n.message}</span>
+                        <span className="mt-1 block text-[10px] text-slate-400">{n.at ? formatRelative(n.at) : n.timeLabel || 'Current'}</span>
                       </span>
-                    </div>
-                    <p className="text-slate-600 text-[11px] mt-1 leading-relaxed">
-                      {item.message}
-                    </p>
-                  </div>
+                    </button>
+                  </li>
                 ))}
-              </div>
-
-              <div className="border-t border-slate-200 bg-slate-50 p-2 text-center">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsNotificationsOpen(false);
-                    navigate('/student?tab=notifications');
-                  }}
-                  className="text-xs text-[#1E3A5F] font-semibold hover:underline cursor-pointer"
-                >
-                  View All Notices & Circulars &rarr;
-                </button>
-              </div>
+              </ul>
+              <Link to={NOTIFICATION_PATHS[role] || '/'} onClick={() => setNotifOpen(false)} className="block border-t border-slate-200 bg-slate-50 px-4 py-2.5 text-center text-xs font-semibold text-[#1E3A5F] hover:underline">
+                View all notifications
+              </Link>
             </div>
           )}
         </div>
 
-        {/* Separator */}
-        <div className="h-5 w-px bg-slate-200" />
-
-        {/* Student Profile Menu Dropdown (Requirement 2) */}
         <div className="relative" ref={profileRef}>
           <button
             type="button"
-            onClick={() => setIsProfileOpen((prev) => !prev)}
-            className="flex items-center gap-2 rounded-xs p-1 hover:bg-slate-100 transition-colors cursor-pointer text-left focus:outline-none"
-            aria-expanded={isProfileOpen}
+            onClick={() => setProfileOpen((v) => !v)}
+            aria-haspopup="true"
+            aria-expanded={profileOpen}
+            className="flex items-center gap-2 rounded-sm py-1 pl-1 pr-1.5 hover:bg-slate-100"
           >
-            <div className="flex h-7 w-7 items-center justify-center rounded-xs bg-[#1E3A5F] text-white font-bold text-xs">
-              {getInitials(displayName)}
-            </div>
-
-            <div className="hidden sm:block leading-tight text-left">
-              <p className="text-xs font-semibold text-slate-800 truncate max-w-[130px]">
-                {displayName}
-              </p>
-              <p className="text-[10px] text-slate-500 font-mono font-bold">
-                {displayUsn}
-              </p>
-            </div>
-
-            <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+            <span className="flex h-8 w-8 items-center justify-center rounded-sm bg-[#1E3A5F] text-[11px] font-bold text-white">{initials}</span>
+            <span className="hidden text-left leading-tight sm:block">
+              <span className="block max-w-40 truncate text-xs font-semibold text-slate-900">{user?.name || 'User'}</span>
+              <span className="block max-w-40 truncate font-mono text-[10px] text-slate-500">{identifier}</span>
+            </span>
+            <ChevronDown className="hidden h-3.5 w-3.5 text-slate-400 sm:block" />
           </button>
 
-          {/* Profile Menu Dropdown Panel */}
-          {isProfileOpen && (
-            <div className="absolute right-0 mt-2 w-72 rounded-xs border border-slate-300 bg-white shadow-lg z-50 text-xs text-slate-700">
-              {/* Header Box */}
-              <div className="p-3.5 border-b border-slate-200 bg-slate-50">
-                <p className="font-bold text-slate-900 text-sm">{displayName}</p>
-                <p className="text-xs font-mono font-bold text-[#1E3A5F] mt-0.5">
-                  USN: {displayUsn}
-                </p>
-                <p className="text-[11px] text-slate-600 mt-1">
-                  Computer Science & Engineering &bull; Sem 6
-                </p>
-                <div className="mt-2 inline-flex items-center gap-1.5 text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-xs font-medium">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  <span>Terminal Authorized (Admit Card Verified)</span>
-                </div>
+          {profileOpen && (
+            <div className="es-fade-in absolute right-0 top-11 z-50 w-60 rounded-sm border border-slate-200 bg-white py-1 shadow-lg">
+              <div className="border-b border-slate-100 px-4 py-2.5">
+                <p className="truncate text-xs font-semibold text-slate-900">{user?.name}</p>
+                <p className="truncate text-[11px] text-slate-500">{user?.email}</p>
+                <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-[#1E3A5F]">{ROLE_LABELS[role]}</p>
               </div>
-
-              {/* Menu Links */}
-              <div className="p-1 space-y-0.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsProfileOpen(false);
-                    navigate('/student?tab=profile');
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-slate-700 hover:bg-slate-100 rounded-xs text-left cursor-pointer"
-                >
-                  <User className="w-3.5 h-3.5 text-slate-400" />
-                  <span>View Full Student Profile</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsProfileOpen(false);
-                    navigate('/student?tab=exams');
-                  }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-slate-700 hover:bg-slate-100 rounded-xs text-left cursor-pointer"
-                >
-                  <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                  <span>My Examination Roster</span>
-                </button>
-              </div>
-
-              {/* Logout Footer */}
-              <div className="border-t border-slate-200 p-1.5 bg-slate-50">
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 rounded-xs transition-colors cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Sign Out Session</span>
-                </button>
-              </div>
+              <Link to={PROFILE_PATHS[role] || '/'} onClick={() => setProfileOpen(false)} className="flex items-center gap-2 px-4 py-2 text-xs text-slate-700 hover:bg-slate-50">
+                <UserCircle className="h-4 w-4 text-slate-400" /> My profile
+              </Link>
+              {role === USER_ROLES.STUDENT && (
+                <Link to="/student?tab=exams" onClick={() => setProfileOpen(false)} className="flex items-center gap-2 px-4 py-2 text-xs text-slate-700 hover:bg-slate-50">
+                  <Bell className="h-4 w-4 text-slate-400" /> My examinations
+                </Link>
+              )}
+              <button type="button" onClick={handleLogout} className="flex w-full items-center gap-2 border-t border-slate-100 px-4 py-2 text-left text-xs text-rose-700 hover:bg-rose-50">
+                <LogOut className="h-4 w-4" /> Sign out
+              </button>
             </div>
           )}
         </div>

@@ -1,4 +1,4 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useId } from 'react';
 import { AlertCircle } from 'lucide-react';
 
 /**
@@ -28,7 +28,8 @@ const InputField = forwardRef(function InputField(
   },
   ref
 ) {
-  const inputId = id || name || `input-${Math.random().toString(36).substring(2, 9)}`;
+  const autoId = useId();
+  const inputId = id || name || autoId;
 
   return (
     <div className={`w-full text-left ${className}`}>
@@ -52,6 +53,8 @@ const InputField = forwardRef(function InputField(
         <input
           ref={ref}
           id={inputId}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error || helperText ? `${inputId}-hint` : undefined}
           name={name}
           type={type}
           value={value}
@@ -60,7 +63,7 @@ const InputField = forwardRef(function InputField(
           placeholder={placeholder}
           disabled={disabled}
           required={required}
-          className={`w-full h-9 rounded-sm border bg-white text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed ${
+          className={`w-full h-9 rounded-sm border bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed ${
             PrefixIcon ? 'pl-8.5' : 'pl-3'
           } ${suffixButton || SuffixIcon || error ? 'pr-8.5' : 'pr-3'} ${
             error
@@ -86,9 +89,9 @@ const InputField = forwardRef(function InputField(
       </div>
 
       {error ? (
-        <p className="mt-1 text-xs text-red-600">{error}</p>
+        <p id={`${inputId}-hint`} className="mt-1 text-xs text-red-600">{error}</p>
       ) : helperText ? (
-        <p className="mt-1 text-[11px] text-slate-500">{helperText}</p>
+        <p id={`${inputId}-hint`} className="mt-1 text-[11px] text-slate-500">{helperText}</p>
       ) : null}
     </div>
   );

@@ -19,19 +19,21 @@ export default function Button({
   ...props
 }) {
   const baseStyles =
-    'inline-flex items-center justify-center font-medium transition-colors duration-150 rounded border focus:outline-none focus:ring-2 focus:ring-offset-1 select-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+    'inline-flex items-center justify-center whitespace-nowrap font-medium transition-colors duration-150 rounded-sm border focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 select-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
   const variants = {
     primary:
-      'bg-[#1E3A5F] hover:bg-[#152A45] active:bg-[#0F1D30] text-white border-transparent shadow-xs focus:ring-[#1E3A5F]/40',
+      'bg-[#1E3A5F] hover:bg-[#152A45] active:bg-[#0F1D30] text-white border-transparent shadow-xs focus-visible:ring-[#1E3A5F]/40',
     secondary:
-      'bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 border-slate-300 shadow-xs focus:ring-slate-300',
+      'bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 border-slate-300 shadow-xs focus-visible:ring-slate-300',
     outline:
-      'bg-transparent hover:bg-[#EBF2FA] active:bg-[#D9E6F5] text-[#1E3A5F] border-[#1E3A5F] focus:ring-[#1E3A5F]/30',
+      'bg-transparent hover:bg-[#EBF2FA] active:bg-[#D9E6F5] text-[#1E3A5F] border-[#1E3A5F] focus-visible:ring-[#1E3A5F]/30',
     danger:
-      'bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white border-transparent shadow-xs focus:ring-rose-500/40',
+      'bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white border-transparent shadow-xs focus-visible:ring-rose-500/40',
+    success:
+      'bg-emerald-700 hover:bg-emerald-800 active:bg-emerald-900 text-white border-transparent shadow-xs focus-visible:ring-emerald-600/40',
     ghost:
-      'bg-transparent hover:bg-slate-100 active:bg-slate-200 text-slate-700 border-transparent focus:ring-slate-300',
+      'bg-transparent hover:bg-slate-100 active:bg-slate-200 text-slate-700 border-transparent focus-visible:ring-slate-300',
   };
 
   const sizes = {
@@ -55,7 +57,7 @@ export default function Button({
         <ResolvedLeftIcon className="w-3.5 h-3.5 shrink-0" />
       ) : null}
 
-      <span>{children}</span>
+      {children !== undefined && children !== null && children !== false && <span>{children}</span>}
 
       {!isLoading && RightIcon && (
         <RightIcon className="w-3.5 h-3.5 shrink-0" />

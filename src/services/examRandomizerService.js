@@ -178,6 +178,43 @@ class ExamRandomizerService {
     return state;
   }
 
+  /**
+   * Edit exam configuration (title, semester, date, duration, instructions).
+   * Only allowed while the exam is a draft; active attempts keep their own
+   * snapshot of meta, so this can never alter a paper being taken.
+   */
+  updateExamMeta(changes) {
+    const state = this.getExamState();
+    if (state.isPublished) {
+      throw new Error('Unpublish the examination before changing its configuration.');
+    }
+    const next = { ...state.meta };
+    if (changes.courseTitle !== undefined) {
+      const title = String(changes.courseTitle).trim();
+      if (title.length < 3) throw new Error('Course title must be at least 3 characters.');
+      next.courseTitle = title;
+    }
+    if (changes.semester !== undefined) next.semester = String(changes.semester).trim();
+    if (changes.examDate !== undefined) next.examDate = String(changes.examDate).trim();
+    if (changes.durationMinutes !== undefined) {
+      const minutes = Number(changes.durationMinutes);
+      if (!Number.isInteger(minutes) || minutes < 5 || minutes > 300) {
+        throw new Error('Duration must be a whole number between 5 and 300 minutes.');
+      }
+      next.durationMinutes = minutes;
+    }
+    if (changes.instructions !== undefined) {
+      const lines = (Array.isArray(changes.instructions) ? changes.instructions : String(changes.instructions).split('\n'))
+        .map((line) => String(line).trim())
+        .filter(Boolean);
+      if (!lines.length) throw new Error('Provide at least one instruction for candidates.');
+      next.instructions = lines;
+    }
+    state.meta = next;
+    this.saveExamState(state);
+    return state;
+  }
+
   resetToDefaults() {
     safeStorageRemove(STORAGE_KEY);
     this.memoryExamState = makeExamState();
@@ -361,6 +398,29 @@ class ExamRandomizerService {
     }
     this.saveStudentAttempt(normalizedId, result);
     return result;
+  }
+
+  /**
+   * Read-only view of every attempt in the registry for administrator reports.
+   * Never used by student screens.
+   */
+  listAttempts() {
+    const registry = this.readPaperAttempts();
+    return Object.values(registry.attempts || {})
+      .map((attempt) => ({
+        attemptId: attempt.attemptId,
+        studentIdentifier: attempt.studentIdentifier,
+        status: attempt.status,
+        startedAt: attempt.startedAt,
+        submittedAt: attempt.submittedAt || null,
+        patternLabel: attempt.patternData?.patternLabel,
+        paperCode: attempt.patternData?.paperCode,
+        courseCode: attempt.meta?.courseCode,
+        courseTitle: attempt.meta?.courseTitle,
+        durationMinutes: attempt.meta?.durationMinutes,
+        result: attempt.result || null,
+      }))
+      .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
   }
 
   saveStudentAttempt(studentIdentifier, result) {
