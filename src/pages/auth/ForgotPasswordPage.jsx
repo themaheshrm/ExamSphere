@@ -67,12 +67,12 @@ export default function ForgotPasswordPage() {
       <main className="mx-auto w-full max-w-md flex-1 px-5 py-14 sm:py-20">
         <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Account recovery</p>
         <h1 className="mt-3 text-2xl font-semibold tracking-tight text-[#1E3A5F]">Reset your password</h1>
-        <p className="mt-2 text-sm text-slate-600">A reset link is sent to the email address registered with the institution.</p>
+        <p className="mt-2 text-sm text-slate-600">A reset link is sent to your registered Dr. AIT email address.</p>
 
         <div className="mt-8 flex border-b border-slate-200" role="group" aria-label="Account type">
           {[
             [USER_ROLES.STUDENT, 'Student'],
-            [USER_ROLES.ADMIN, 'Institution Admin'],
+            [USER_ROLES.ADMIN, 'Administrator'],
             [USER_ROLES.SUPER_ADMIN, 'Super Admin'],
           ].map(([key, label]) => (
             <button

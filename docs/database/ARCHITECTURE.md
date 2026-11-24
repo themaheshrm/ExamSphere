@@ -22,6 +22,22 @@ supabase/
 
 ---
 
+## 0. Deployment scope: Dr. AIT only
+
+ExamSphere is deployed **exclusively for Dr. Ambedkar Institute of Technology (college code `1DA`)**. The application UI has no institution selection, registration or switching; Super Admin sees a read-only Dr. AIT *Institution Profile*.
+
+The schema below still carries `institution_id` and the tenancy design. **Migrations were deliberately left unchanged** because `institution_id` is a dependency of:
+- the already-applied migrations 003 and 004 (`admin_provision_user(p_institution_id …)`);
+- `authService.buildUserObject` (`profiles.institution_id`);
+- the composite foreign keys and row-level security in 005–010.
+
+Operating it as single-institution therefore needs only data, not schema changes:
+- seed exactly one `institutions` row (Dr. AIT, `1DA`);
+- give every admin and student profile that `institution_id`;
+- never create a second institution.
+
+The `Other Engineering College` rows in `supabase/tests/100_e2e_security_test.sql` are a **local test fixture only**. They prove cross-tenant isolation in the RLS code, and they are never shipped or seeded.
+
 ## 1. What the repository already depends on (findings)
 
 | Object | Where it's used | Defined in repo? |
@@ -301,7 +317,7 @@ Each migration depends on the one before it: 005 provides tenancy and helpers fo
 | `getStudentAttempt` (never used) | `rpc('get_my_result', { p_exam_id })` | |
 | `studentMockData` (upcoming, results, announcements) | `get_my_exams`, `get_student_performance`, `from('announcements')`, `profiles` + `student_details` | |
 | `AdminDashboard` mock stats | `rpc('get_admin_dashboard')` | |
-| `SuperAdminDashboard`, `OrganizationsPage`, `SystemSettingsPage` | `get_platform_overview`, `from('institutions')` CRUD, `institutions.settings` | |
+| `SuperAdminDashboard`, `InstitutionProfilePage`, `SystemSettingsPage` | `get_platform_overview`, read the single Dr. AIT `institutions` row, `institutions.settings` | No institution create/suspend in the UI (single-institution deployment). |
 | Proctoring (not implemented) | `rpc('log_attempt_event', …)` on `visibilitychange`, `fullscreenchange`, copy/paste | |
 
 ---

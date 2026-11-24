@@ -3,13 +3,13 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import SuperAdminLoginForm from './SuperAdminLoginForm';
 import AdminLoginForm from './AdminLoginForm';
 import StudentLoginForm from './StudentLoginForm';
-import { USER_ROLES } from '../../utils/constants';
+import { INSTITUTION, USER_ROLES } from '../../utils/constants';
 import { useAuth } from '../../context/AuthContext';
 import { PublicHeader, PublicFooter } from '../../components/public/PublicChrome';
 
 const ROLE_TABS = [
   [USER_ROLES.STUDENT, 'Student'],
-  [USER_ROLES.ADMIN, 'Institution Admin'],
+  [USER_ROLES.ADMIN, 'Administrator'],
   [USER_ROLES.SUPER_ADMIN, 'Super Admin'],
 ];
 
@@ -100,7 +100,7 @@ export default function LoginPage() {
                 ['Password', 'Use the confidential password or hall-ticket PIN issued by the examination authority.'],
                 ['One session', 'Only one active session is allowed per candidate. Do not open the examination in additional tabs.'],
                 ['Interruptions', 'If your computer or network fails during an examination, inform the room invigilator immediately.'],
-                ['Staff', 'Examination office staff and administrators should choose the Institution Admin or Super Admin portal.'],
+                ['Staff', 'Examination office staff should choose the Administrator or Super Admin portal.'],
               ].map(([title, text], i) => (
                 <li key={title} className="grid gap-1 py-4 sm:grid-cols-[8rem_1fr] sm:gap-6">
                   <span className="text-xs font-semibold text-slate-900"><span className="mr-2 tabular-nums text-slate-400">{String(i + 1).padStart(2, '0')}</span>{title}</span>
@@ -109,7 +109,7 @@ export default function LoginPage() {
               ))}
             </ol>
             <p className="mt-6 text-xs leading-relaxed text-slate-500">
-              Examination Control Cell: Central Computer Center (CCC), 2nd Floor, Dr. AIT Campus. For hall-ticket discrepancies, contact your department examination coordinator.
+              Examination Control Cell: {INSTITUTION.examCentre}. For hall-ticket discrepancies, contact your department examination coordinator.
             </p>
           </section>
         </div>

@@ -12,7 +12,7 @@ export function InstitutionMark({ size = 'md', inverted = false }) {
   return (
     <span className={`flex ${box} shrink-0 flex-col items-center justify-center rounded-sm ${tone}`} aria-hidden="true">
       <span className={`font-serif font-bold tracking-wide ${size === 'sm' ? 'text-[9px]' : 'text-[11px]'}`}>Dr. AIT</span>
-      <span className={`text-[8px] ${inverted ? 'text-slate-500' : 'text-slate-300'}`}>1980</span>
+      <span className={`text-[8px] ${inverted ? 'text-slate-500' : 'text-slate-300'}`}>{INSTITUTION.established}</span>
     </span>
   );
 }
@@ -57,8 +57,7 @@ export function PublicFooter() {
       <div className="mx-auto grid max-w-6xl gap-6 px-5 py-10 text-xs leading-relaxed text-slate-500 sm:grid-cols-2 sm:px-8">
         <div>
           <p className="font-semibold text-slate-800">{INSTITUTION.name}</p>
-          <p>BDA Outer Ring Road, Near Jnana Bharathi Campus,</p>
-          <p>Mallathahalli, Bengaluru, Karnataka – 560056</p>
+          {INSTITUTION.addressLines.map((line) => <p key={line}>{line}</p>)}
         </div>
         <div className="sm:text-right">
           <p className="font-semibold text-slate-800">{INSTITUTION.office}</p>

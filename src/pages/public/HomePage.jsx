@@ -52,7 +52,7 @@ export default function HomePage() {
             )}
           </div>
           <p className="mt-6 text-xs text-slate-500">
-            Academic Year {INSTITUTION.academicYear} · An Autonomous Institution affiliated to VTU, Belagavi
+            Academic Year {INSTITUTION.academicYear} · {INSTITUTION.status}
           </p>
         </section>
 

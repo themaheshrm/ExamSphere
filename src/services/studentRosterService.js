@@ -1,7 +1,9 @@
 import { readJson, writeJson, emitChange } from './localStore.js';
+import { INSTITUTION } from '../utils/constants.js';
 
 const KEY = 'examsphere_candidate_roster_v1';
-export const USN_PATTERN = /^[1-4][A-Z]{2}\d{2}[A-Z]{2,3}\d{3}$/;
+// Dr. AIT USNs always carry the VTU college code 1DA (e.g. 1DA22CS001).
+export const USN_PATTERN = new RegExp(`^${INSTITUTION.code}\\d{2}[A-Z]{2,3}\\d{3}$`);
 
 const SEED = [
   ['1DA22CS001', 'Alex Chen', 'B'], ['1DA22CS002', 'Bhavana K.', 'B'], ['1DA22CS003', 'Chirag M. Gowda', 'B'],
@@ -33,9 +35,10 @@ export function validateCandidate(input) {
   const email = String(input.email ?? '').trim().toLowerCase();
   const semester = Number(input.semester);
   const section = String(input.section ?? '').trim().toUpperCase();
-  if (!USN_PATTERN.test(usn)) errors.usn = 'Enter a valid USN, e.g. 1DA22CS011.';
+  if (!USN_PATTERN.test(usn)) errors.usn = `Enter a valid ${INSTITUTION.shortName} USN starting with ${INSTITUTION.code}, e.g. ${INSTITUTION.code}22CS011.`;
   if (name.length < 2) errors.name = 'Full name is required.';
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) errors.email = 'Enter a valid email address.';
+  else if (email && !email.endsWith(`@${INSTITUTION.emailDomain}`)) errors.email = `Use the candidate's @${INSTITUTION.emailDomain} address.`;
   if (!Number.isInteger(semester) || semester < 1 || semester > 8) errors.semester = 'Semester must be 1–8.';
   if (!/^[A-Z]$/.test(section)) errors.section = 'Section must be a single letter.';
   return {
@@ -43,7 +46,7 @@ export function validateCandidate(input) {
     value: {
       usn,
       name,
-      email: email || `${usn.toLowerCase()}@drait.edu.in`,
+      email: email || `${usn.toLowerCase()}@${INSTITUTION.emailDomain}`,
       department: String(input.department ?? '').trim() || 'Computer Science & Engineering',
       semester,
       section,
