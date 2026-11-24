@@ -16,7 +16,8 @@ import { useToast } from '../../components/common/Toast';
 import { examRandomizerService } from '../../services/examRandomizerService';
 import { studentRosterService } from '../../services/studentRosterService';
 import { activityLogService } from '../../services/activityLogService';
-import { assignPatternToStudent, PATTERN_LABELS } from '../../utils/randomizationEngine';
+import { PATTERN_LABELS } from '../../utils/randomizationEngine';
+import { assignPatternForCandidate } from '../../utils/patternAssignment';
 import { formatDateTime } from '../../utils/format';
 import { useAuth } from '../../context/AuthContext';
 
@@ -63,7 +64,7 @@ export default function ExamManagementPage() {
   const masterById = Object.fromEntries((examState.masterQuestions || []).map((q) => [q.id, q]));
   const distribution = PATTERN_LABELS.map((label) => ({
     label,
-    count: roster.filter((s) => s.status === 'Eligible' && assignPatternToStudent(s.usn) === label).length,
+    count: roster.filter((s) => s.status === 'Eligible' && assignPatternForCandidate(s.usn) === label).length,
   }));
   const maxDist = Math.max(1, ...distribution.map((d) => d.count));
   const activeAttempts = attempts.filter((a) => a.status === 'active').length;
@@ -158,7 +159,7 @@ export default function ExamManagementPage() {
         )}
       />
 
-      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 lg:grid-cols-5" aria-label="Examination status">
+      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 max-lg:[&>*:last-child]:col-span-2 lg:grid-cols-5" aria-label="Examination status">
         {[
           ['Status', examState.isPublished ? 'Published' : 'Draft', examState.isPublished ? `Since ${formatDateTime(examState.publishedAt)}` : 'Hidden from candidates'],
           ['Patterns', `${Object.keys(examState.patterns).length} × 25`, verification?.isValid ? 'Integrity verified' : 'Verification failed'],
@@ -427,7 +428,7 @@ export default function ExamManagementPage() {
                         <TableCell className="font-mono font-semibold text-[#1E3A5F]">{s.usn}</TableCell>
                         <TableCell>{s.name}<span className="block text-[11px] text-slate-500">Sem {s.semester} · Sec {s.section}</span></TableCell>
                         <TableCell><StatusBadge status={s.status} size="sm" /></TableCell>
-                        <TableCell className="font-mono">{s.status === 'Eligible' ? `${assignPatternToStudent(s.usn)} · ${meta.courseCode}-${assignPatternToStudent(s.usn)}` : '—'}</TableCell>
+                        <TableCell className="font-mono">{s.status === 'Eligible' ? `${assignPatternForCandidate(s.usn)} · ${meta.courseCode}-${assignPatternForCandidate(s.usn)}` : '—'}</TableCell>
                         <TableCell>
                           {attempt ? <StatusBadge status={attempt.status === 'active' ? 'In progress' : 'Submitted'} size="sm" /> : <span className="text-[11px] text-slate-400">Not started</span>}
                         </TableCell>

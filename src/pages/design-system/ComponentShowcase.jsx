@@ -128,12 +128,12 @@ export default function ComponentShowcase() {
           <div className="px-4"><Tabs tabs={[{ id: 'one', label: 'Register', count: 3 }, { id: 'two', label: 'Analysis' }]} value={tab} onChange={setTab} /></div>
           <Table className="rounded-none border-0">
             <TableHeader>
-              <TableRow><TableHead>USN</TableHead><TableHead>Candidate</TableHead><TableHead align="right">Score</TableHead><TableHead>Result</TableHead></TableRow>
+              <TableRow><TableHead>USN</TableHead><TableHead className="hidden sm:table-cell">Candidate</TableHead><TableHead align="right">Score</TableHead><TableHead>Result</TableHead></TableRow>
             </TableHeader>
             <TableBody>
-              <TableRow><TableCell className="font-mono">1DA22CS001</TableCell><TableCell>Alex Chen</TableCell><TableCell align="right">42 / 50</TableCell><TableCell><StatusBadge status="Pass" size="sm" /></TableCell></TableRow>
-              <TableRow><TableCell className="font-mono">1DA22CS002</TableCell><TableCell>Bhavana K.</TableCell><TableCell align="right">18 / 50</TableCell><TableCell><StatusBadge status="Fail" size="sm" /></TableCell></TableRow>
-              <SkeletonTableRow columns={4} />
+              <TableRow><TableCell className="font-mono">1DA22CS001</TableCell><TableCell className="hidden sm:table-cell">Alex Chen</TableCell><TableCell align="right">42 / 50</TableCell><TableCell><StatusBadge status="Pass" size="sm" /></TableCell></TableRow>
+              <TableRow><TableCell className="font-mono">1DA22CS002</TableCell><TableCell className="hidden sm:table-cell">Bhavana K.</TableCell><TableCell align="right">18 / 50</TableCell><TableCell><StatusBadge status="Fail" size="sm" /></TableCell></TableRow>
+              <SkeletonTableRow columns={3} />
             </TableBody>
           </Table>
           <Pagination currentPage={page} totalPages={9} totalItems={86} pageSize={10} onPageChange={setPage} />

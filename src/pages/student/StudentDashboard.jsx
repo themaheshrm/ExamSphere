@@ -26,7 +26,7 @@ import { studentRosterService } from '../../services/studentRosterService';
 import { notificationService } from '../../services/notificationService';
 import { platformService } from '../../services/platformService';
 import { authService } from '../../services/authService';
-import { assignPatternToStudent } from '../../utils/randomizationEngine';
+import { assignPatternForCandidate } from '../../utils/patternAssignment';
 import { useDataVersion } from '../../utils/useDataVersion';
 import { formatDateTime } from '../../utils/format';
 import { INSTITUTION, USER_ROLES } from '../../utils/constants';
@@ -68,7 +68,7 @@ export default function StudentDashboard() {
 
   const studentIdentity = user ? (user.usn || user.identifier || user.id || null) : studentInfo.usn;
   const normalizedId = String(studentIdentity ?? '').trim().toUpperCase();
-  const assignedPattern = assignPatternToStudent(studentIdentity);
+  const assignedPattern = assignPatternForCandidate(studentIdentity);
   const eligible = studentRosterService.isEligible(normalizedId);
   const rosterEntry = studentRosterService.find(normalizedId);
   const ownAttempts = examRandomizerService.listAttempts().filter((a) => a.studentIdentifier === normalizedId);
@@ -238,7 +238,7 @@ export default function StudentDashboard() {
                 <TableHead>Course</TableHead>
                 <TableHead className="hidden sm:table-cell">Date & time</TableHead>
                 <TableHead className="hidden md:table-cell">Centre</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead className="hidden sm:table-cell">Status</TableHead>
                 <TableHead align="right">Action</TableHead>
               </TableRow>
             </TableHeader>
@@ -248,10 +248,11 @@ export default function StudentDashboard() {
                   <p className="font-mono text-xs font-semibold text-[#1E3A5F]">{meta.courseCode}</p>
                   <p className="font-medium text-slate-900">{meta.courseTitle}</p>
                   <p className="text-[11px] text-slate-500 sm:hidden">{meta.examDate} · {activeExam.time}</p>
+                  <p className="mt-1 sm:hidden"><StatusBadge status={cbtState} size="sm">{cbtLabel}</StatusBadge></p>
                 </TableCell>
                 <TableCell className="hidden sm:table-cell">{meta.examDate}<span className="block text-[11px] text-slate-500">{activeExam.time} · {meta.durationMinutes} min</span></TableCell>
                 <TableCell className="hidden md:table-cell">{activeExam.terminal}</TableCell>
-                <TableCell><StatusBadge status={cbtState} size="sm">{cbtLabel}</StatusBadge></TableCell>
+                <TableCell className="hidden sm:table-cell"><StatusBadge status={cbtState} size="sm">{cbtLabel}</StatusBadge></TableCell>
                 <TableCell align="right"><div className="flex justify-end">{examAction('sm')}</div></TableCell>
               </TableRow>
               {otherExams.map((exam) => (
@@ -259,11 +260,11 @@ export default function StudentDashboard() {
                   <TableCell>
                     <p className="font-mono text-xs font-semibold text-[#1E3A5F]">{exam.courseCode}</p>
                     <p className="font-medium text-slate-900">{exam.courseTitle}</p>
-                    <p className="text-[11px] text-slate-500 sm:hidden">{exam.examDate} · {exam.time}</p>
+                    <p className="text-[11px] text-slate-500 sm:hidden">{exam.examDate} · {exam.time} · {exam.status}</p>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">{exam.examDate}<span className="block text-[11px] text-slate-500">{exam.time} · {exam.duration}</span></TableCell>
                   <TableCell className="hidden md:table-cell">{exam.hall}</TableCell>
-                  <TableCell><StatusBadge status="Pending" size="sm">{exam.status}</StatusBadge></TableCell>
+                  <TableCell className="hidden sm:table-cell"><StatusBadge status="Pending" size="sm">{exam.status}</StatusBadge></TableCell>
                   <TableCell align="right"><Button size="sm" variant="ghost" onClick={() => setDetailsExam(exam)}>Details</Button></TableCell>
                 </TableRow>
               ))}
@@ -309,7 +310,7 @@ export default function StudentDashboard() {
                   <TableHead align="center">Marks</TableHead>
                   <TableHead align="center">Grade</TableHead>
                   <TableHead align="center" className="hidden sm:table-cell">Credits</TableHead>
-                  <TableHead align="right">Status</TableHead>
+                  <TableHead align="right" className="hidden sm:table-cell">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -320,7 +321,7 @@ export default function StudentDashboard() {
                     <TableCell align="center" className="tabular-nums">{res.scoredMarks} / {res.maxMarks}</TableCell>
                     <TableCell align="center"><span className="font-semibold">{res.grade.split(' ')[0]}</span><span className="block text-[11px] text-slate-500">GP {res.gradePoint}</span></TableCell>
                     <TableCell align="center" className="hidden tabular-nums sm:table-cell">{res.credits}</TableCell>
-                    <TableCell align="right"><StatusBadge status="Pass" size="sm">{res.status}</StatusBadge></TableCell>
+                    <TableCell align="right" className="hidden sm:table-cell"><StatusBadge status="Pass" size="sm">{res.status}</StatusBadge></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

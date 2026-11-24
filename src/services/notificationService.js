@@ -4,7 +4,7 @@ import { questionBankService } from './questionBankService.js';
 import { studentRosterService } from './studentRosterService.js';
 import { activityLogService } from './activityLogService.js';
 import { platformService } from './platformService.js';
-import { assignPatternToStudent } from '../utils/randomizationEngine.js';
+import { assignPatternForCandidate } from '../utils/patternAssignment.js';
 import { notifications as studentCirculars } from '../data/studentMockData.js';
 import { USER_ROLES } from '../utils/constants.js';
 
@@ -27,7 +27,7 @@ function studentNotifications(user) {
   if (identity && !studentRosterService.isEligible(identity)) {
     items.push({ id: `withheld-${identity}`, tone: 'danger', title: 'Examination access withheld', message: 'Your eligibility for the current examination has been withheld. Contact the examination office.', at: null, link: '/student?tab=exams' });
   } else if (state.isPublished) {
-    const pattern = assignPatternToStudent(identity);
+    const pattern = assignPatternForCandidate(identity);
     items.push({
       id: `published-${state.meta.id}-${state.publishedAt}`,
       tone: 'info',
@@ -85,13 +85,9 @@ function adminNotifications(user) {
 
 function superAdminNotifications() {
   const items = [];
-  const suspended = platformService.listInstitutions().filter((i) => i.status === 'Suspended');
   const settings = platformService.getSettings();
   if (settings.maintenanceNotice) {
     items.push({ id: `maint-${settings.maintenanceNotice.length}`, tone: 'warning', title: 'Maintenance notice is live', message: settings.maintenanceNotice, at: null, link: '/super-admin/settings' });
-  }
-  if (suspended.length) {
-    items.push({ id: `susp-${suspended.length}`, tone: 'warning', title: `${suspended.length} institution${suspended.length === 1 ? '' : 's'} suspended`, message: suspended.map((i) => i.code).join(', '), at: null, link: '/super-admin/organizations' });
   }
   activityLogService.list().slice(0, 8).forEach((e) => items.push({ id: `log-${e.id}`, tone: e.severity === 'warning' ? 'warning' : 'neutral', title: e.action, message: `${e.actor.name}${e.target ? ` · ${e.target}` : ''}`, at: e.at, link: '/super-admin/activity' }));
   return items;

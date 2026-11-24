@@ -3,7 +3,7 @@ import { readJson, writeJson, makeId, emitChange } from './localStore.js';
 const KEY = 'examsphere_activity_log_v1';
 const MAX_ENTRIES = 500;
 
-export const ACTIVITY_CATEGORIES = ['exam', 'question-bank', 'candidate', 'attempt', 'institution', 'user', 'settings'];
+export const ACTIVITY_CATEGORIES = ['exam', 'question-bank', 'candidate', 'attempt', 'user', 'settings'];
 
 function describeActor(actor) {
   if (!actor) return { name: 'System', role: 'system', identifier: null };

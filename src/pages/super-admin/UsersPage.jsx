@@ -17,17 +17,16 @@ import { platformService } from '../../services/platformService';
 import { activityLogService } from '../../services/activityLogService';
 import { usePagination } from '../../utils/usePagination';
 import { useAuth } from '../../context/AuthContext';
+import { INSTITUTION } from '../../utils/constants';
 import { formatDate } from '../../utils/format';
 
-const EMPTY = { name: '', email: '', role: 'admin', institutionId: '', staffId: '', status: 'Active' };
+const EMPTY = { name: '', email: '', role: 'admin', staffId: '', status: 'Active' };
 const selectCls = 'es-select h-9 w-full rounded-sm border border-slate-300 bg-white pl-3 text-sm focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]';
 
 export default function UsersPage() {
   const { user } = useAuth();
   const { notify } = useToast();
   const [users, setUsers] = useState(() => platformService.listUsers());
-  const institutions = platformService.listInstitutions();
-  const instName = Object.fromEntries(institutions.map((i) => [i.id, i.name]));
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [editing, setEditing] = useState(null);
@@ -67,13 +66,13 @@ export default function UsersPage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Platform Administration"
-        title="Users & Administrators"
-        description="Institution administrators and platform operators. Candidate accounts are managed by each institution."
+        title="Staff Accounts"
+        description={`Examination office administrators and platform operators for ${INSTITUTION.name}. Candidate accounts are managed on the Candidates page.`}
         actions={<Button icon={UserPlus} onClick={() => { setEditing(EMPTY); setErrors({}); }}>Add user</Button>}
       />
 
       <Alert tone="info">
-        This directory records each administrator's role, institution and status. Sign-in credentials are issued separately through the institution's authentication provider.
+        This directory records each staff member's role and status. Sign-in credentials are issued separately through Dr. AIT's authentication provider.
       </Alert>
 
       <Card bodyClassName="p-0">
@@ -81,7 +80,7 @@ export default function UsersPage() {
           <InputField aria-label="Search users" placeholder="Search by name, email or staff ID" prefixIcon={Search} value={search} onChange={(e) => { setSearch(e.target.value); resetPage(); }} />
           <select aria-label="Filter by role" className={selectCls} value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); resetPage(); }}>
             <option value="">All roles</option>
-            <option value="admin">Institution administrators</option>
+            <option value="admin">Examination office administrators</option>
             <option value="super-admin">Super administrators</option>
           </select>
         </div>
@@ -93,10 +92,9 @@ export default function UsersPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>User</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead className="hidden md:table-cell">Institution</TableHead>
+                  <TableHead className="hidden sm:table-cell">Role</TableHead>
                   <TableHead className="hidden lg:table-cell">Created</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead className="hidden sm:table-cell">Status</TableHead>
                   <TableHead align="right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -106,14 +104,14 @@ export default function UsersPage() {
                     <TableCell>
                       <p className="font-medium text-slate-900">{u.name}{isSelf(u) && <span className="ml-1 text-[11px] text-slate-500">(you)</span>}</p>
                       <p className="text-[11px] text-slate-500">{u.email}{u.staffId ? ` · ${u.staffId}` : ''}</p>
+                      <p className="mt-1 flex items-center gap-2 sm:hidden"><Badge size="sm" variant={u.role === 'super-admin' ? 'primary' : 'neutral'}>{u.role === 'super-admin' ? 'Super admin' : 'Exam office admin'}</Badge><StatusBadge status={u.status} size="sm" /></p>
                     </TableCell>
-                    <TableCell><Badge size="sm" variant={u.role === 'super-admin' ? 'primary' : 'neutral'}>{u.role === 'super-admin' ? 'Super admin' : 'Institution admin'}</Badge></TableCell>
-                    <TableCell className="hidden md:table-cell">{u.institutionId ? instName[u.institutionId] || '—' : 'All institutions'}</TableCell>
+                    <TableCell className="hidden sm:table-cell"><Badge size="sm" variant={u.role === 'super-admin' ? 'primary' : 'neutral'}>{u.role === 'super-admin' ? 'Super admin' : 'Exam office admin'}</Badge></TableCell>
                     <TableCell className="hidden lg:table-cell">{formatDate(u.createdAt)}</TableCell>
-                    <TableCell><StatusBadge status={u.status} size="sm" /></TableCell>
+                    <TableCell className="hidden sm:table-cell"><StatusBadge status={u.status} size="sm" /></TableCell>
                     <TableCell align="right">
                       <div className="flex justify-end gap-1">
-                        <button type="button" aria-label={`Edit ${u.name}`} onClick={() => { setEditing({ ...u, institutionId: u.institutionId || '', staffId: u.staffId || '' }); setErrors({}); }} className="rounded-sm p-2 text-slate-500 hover:bg-slate-100 hover:text-[#1E3A5F]"><Edit3 className="h-4 w-4" /></button>
+                        <button type="button" aria-label={`Edit ${u.name}`} onClick={() => { setEditing({ ...u, staffId: u.staffId || '' }); setErrors({}); }} className="rounded-sm p-2 text-slate-500 hover:bg-slate-100 hover:text-[#1E3A5F]"><Edit3 className="h-4 w-4" /></button>
                         {!isSelf(u) && <Button size="sm" variant="ghost" onClick={() => setStatusTarget(u)}>{u.status === 'Active' ? 'Disable' : 'Enable'}</Button>}
                       </div>
                     </TableCell>
@@ -145,23 +143,13 @@ export default function UsersPage() {
             <div>
               <label htmlFor="user-role" className="mb-1 block text-xs font-medium text-slate-800">Role <span className="text-red-600">*</span></label>
               <select id="user-role" className={selectCls} value={editing.role} disabled={isSelf(editing)} onChange={(e) => setEditing({ ...editing, role: e.target.value })}>
-                <option value="admin">Institution administrator</option>
+                <option value="admin">Examination office administrator</option>
                 <option value="super-admin">Super administrator</option>
               </select>
             </div>
             <InputField label="Staff ID" value={editing.staffId} disabled={editing.role !== 'admin'} onChange={(e) => setEditing({ ...editing, staffId: e.target.value.toUpperCase() })} inputClassName="font-mono" />
-            {editing.role === 'admin' && (
-              <div className="sm:col-span-2">
-                <label htmlFor="user-inst" className="mb-1 block text-xs font-medium text-slate-800">Institution <span className="text-red-600">*</span></label>
-                <select id="user-inst" className={selectCls} value={editing.institutionId} onChange={(e) => setEditing({ ...editing, institutionId: e.target.value })} aria-invalid={Boolean(errors.institutionId)}>
-                  <option value="">Select institution…</option>
-                  {institutions.map((i) => <option key={i.id} value={i.id}>{i.name} ({i.code})</option>)}
-                </select>
-                {errors.institutionId && <p className="mt-1 text-xs text-red-600">{errors.institutionId}</p>}
-              </div>
-            )}
             {editing.role === 'super-admin' && (
-              <Alert tone="warning" className="sm:col-span-2">Super administrators can manage every institution and all platform settings.</Alert>
+              <Alert tone="warning" className="sm:col-span-2">Super administrators can manage staff accounts and all platform settings.</Alert>
             )}
           </form>
         )}

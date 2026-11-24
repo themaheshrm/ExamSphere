@@ -8,7 +8,7 @@ import { authService } from '../../services/authService';
 import { activityLogService } from '../../services/activityLogService';
 import { readJson, writeJson } from '../../services/localStore';
 import { useAuth } from '../../context/AuthContext';
-import { INSTITUTION, ROLE_LABELS, USER_ROLES } from '../../utils/constants';
+import { INSTITUTION, ROLE_LABELS } from '../../utils/constants';
 import { formatDateTime } from '../../utils/format';
 
 const PREFS_KEY = 'examsphere_profile_prefs_v1';
@@ -44,7 +44,7 @@ export default function ProfilePage() {
     ['Role', ROLE_LABELS[role]],
     ['Email', user?.email],
     ['Staff ID', user?.staffId || '—'],
-    ['Institution', role === USER_ROLES.SUPER_ADMIN ? 'All institutions (platform)' : INSTITUTION.name],
+    ['Institution', INSTITUTION.name],
     ['Account ID', user?.id],
   ];
 

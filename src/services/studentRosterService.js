@@ -1,7 +1,11 @@
 import { readJson, writeJson, emitChange } from './localStore.js';
+import { INSTITUTION } from '../utils/constants.js';
+import { DEMO_STUDENTS, isDemoStudent } from '../data/demoAccounts.js';
 
 const KEY = 'examsphere_candidate_roster_v1';
-export const USN_PATTERN = /^[1-4][A-Z]{2}\d{2}[A-Z]{2,3}\d{3}$/;
+const DEMO_SEEDED_KEY = 'examsphere_demo_candidates_added_v1';
+// Dr. AIT USNs always carry the VTU college code 1DA (e.g. 1DA22CS001).
+export const USN_PATTERN = new RegExp(`^${INSTITUTION.code}\\d{2}[A-Z]{2,3}\\d{3}$`);
 
 const SEED = [
   ['1DA22CS001', 'Alex Chen', 'B'], ['1DA22CS002', 'Bhavana K.', 'B'], ['1DA22CS003', 'Chirag M. Gowda', 'B'],
@@ -19,11 +23,36 @@ const SEED = [
   remarks: '',
 }));
 
+const DEMO_CANDIDATES = DEMO_STUDENTS.map((d) => ({
+  usn: d.usn,
+  name: d.name,
+  email: d.email,
+  department: d.department,
+  semester: d.semester,
+  section: d.section,
+  status: 'Eligible',
+  remarks: '',
+  demo: true,
+}));
+
+/**
+ * Adds the five demo candidates once (append-only; existing entries are never
+ * changed). If an admin later removes a demo candidate it stays removed.
+ */
+function withDemoCandidates(roster) {
+  if (readJson(DEMO_SEEDED_KEY, false)) return roster;
+  const present = new Set(roster.map((s) => s.usn));
+  const next = [...roster, ...DEMO_CANDIDATES.filter((d) => !present.has(d.usn)).map((d) => ({ ...d }))];
+  writeJson(KEY, next);
+  writeJson(DEMO_SEEDED_KEY, true);
+  return next;
+}
+
 function load() {
   const saved = readJson(KEY, null);
-  if (Array.isArray(saved)) return saved;
+  if (Array.isArray(saved)) return withDemoCandidates(saved);
   writeJson(KEY, SEED);
-  return SEED.map((s) => ({ ...s }));
+  return withDemoCandidates(SEED.map((s) => ({ ...s })));
 }
 
 export function validateCandidate(input) {
@@ -33,9 +62,10 @@ export function validateCandidate(input) {
   const email = String(input.email ?? '').trim().toLowerCase();
   const semester = Number(input.semester);
   const section = String(input.section ?? '').trim().toUpperCase();
-  if (!USN_PATTERN.test(usn)) errors.usn = 'Enter a valid USN, e.g. 1DA22CS011.';
+  if (!USN_PATTERN.test(usn) && !isDemoStudent(usn)) errors.usn = `Enter a valid ${INSTITUTION.shortName} USN starting with ${INSTITUTION.code}, e.g. ${INSTITUTION.code}22CS011.`;
   if (name.length < 2) errors.name = 'Full name is required.';
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) errors.email = 'Enter a valid email address.';
+  else if (email && !email.endsWith(`@${INSTITUTION.emailDomain}`)) errors.email = `Use the candidate's @${INSTITUTION.emailDomain} address.`;
   if (!Number.isInteger(semester) || semester < 1 || semester > 8) errors.semester = 'Semester must be 1–8.';
   if (!/^[A-Z]$/.test(section)) errors.section = 'Section must be a single letter.';
   return {
@@ -43,12 +73,13 @@ export function validateCandidate(input) {
     value: {
       usn,
       name,
-      email: email || `${usn.toLowerCase()}@drait.edu.in`,
+      email: email || `${usn.toLowerCase()}@${INSTITUTION.emailDomain}`,
       department: String(input.department ?? '').trim() || 'Computer Science & Engineering',
       semester,
       section,
       status: input.status === 'Withheld' ? 'Withheld' : 'Eligible',
       remarks: String(input.remarks ?? '').trim(),
+      ...(isDemoStudent(usn) ? { demo: true } : {}),
     },
   };
 }

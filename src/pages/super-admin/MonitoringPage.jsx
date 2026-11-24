@@ -17,8 +17,7 @@ const STORE_LABELS = {
   examsphere_question_bank_v1: 'Question bank',
   examsphere_candidate_roster_v1: 'Candidate roster',
   examsphere_activity_log_v1: 'Activity log',
-  examsphere_institutions_v1: 'Institutions',
-  examsphere_platform_users_v1: 'Users & administrators',
+  examsphere_platform_users_v1: 'Staff accounts',
   examsphere_platform_settings_v1: 'Platform settings',
 };
 

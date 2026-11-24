@@ -14,7 +14,7 @@ const ResultsPage = lazy(() => import('../pages/admin/ResultsPage'));
 const NotificationsPage = lazy(() => import('../pages/account/NotificationsPage'));
 const ProfilePage = lazy(() => import('../pages/account/ProfilePage'));
 const SuperAdminDashboard = lazy(() => import('../pages/super-admin/SuperAdminDashboard'));
-const OrganizationsPage = lazy(() => import('../pages/super-admin/OrganizationsPage'));
+const InstitutionProfilePage = lazy(() => import('../pages/super-admin/InstitutionProfilePage'));
 const SystemSettingsPage = lazy(() => import('../pages/super-admin/SystemSettingsPage'));
 const UsersPage = lazy(() => import('../pages/super-admin/UsersPage'));
 const MonitoringPage = lazy(() => import('../pages/super-admin/MonitoringPage'));
@@ -73,7 +73,7 @@ export default function AppRoutes() {
             <Route path="student" element={<StudentDashboard />} />
           </Route>
 
-          {/* Protected Institution Admin Routes */}
+          {/* Protected Examination Office (admin) Routes */}
           <Route
             element={
               <ProtectedRoute
@@ -99,7 +99,7 @@ export default function AppRoutes() {
             <Route path="super-admin" element={<SuperAdminDashboard />} />
             <Route
               path="super-admin/organizations"
-              element={<OrganizationsPage />}
+              element={<InstitutionProfilePage />}
             />
             <Route
               path="super-admin/settings"

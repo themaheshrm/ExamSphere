@@ -25,15 +25,25 @@ export const USER_ROLES = {
 
 export const ROLE_LABELS = {
   [USER_ROLES.SUPER_ADMIN]: 'Super Administrator',
-  [USER_ROLES.ADMIN]: 'Institution Administrator',
+  [USER_ROLES.ADMIN]: 'Examination Office Administrator',
   [USER_ROLES.STUDENT]: 'Candidate',
 };
 
+/**
+ * ExamSphere is deployed exclusively for Dr. AIT. These details are the single
+ * source of institutional information used across the UI.
+ */
 export const INSTITUTION = {
   name: 'Dr. Ambedkar Institute of Technology',
   shortName: 'Dr. AIT',
+  code: '1DA',
+  established: 1980,
+  status: 'An Autonomous Institution affiliated to VTU, Belagavi',
   office: 'Office of the Controller of Examinations',
   academicYear: '2026–27',
+  emailDomain: 'drait.edu.in',
+  addressLines: ['BDA Outer Ring Road, Near Jnana Bharathi Campus,', 'Mallathahalli, Bengaluru, Karnataka – 560056'],
+  examCentre: 'Central Computer Center (CCC), 2nd Floor, Dr. AIT Campus',
 };
 
 /**
@@ -42,14 +52,14 @@ export const INSTITUTION = {
  */
 export const NAVIGATION_CONFIG = {
   [USER_ROLES.SUPER_ADMIN]: {
-    title: 'Platform Administration',
+    title: 'Platform Administration · Dr. AIT',
     sections: [
       {
         title: 'Platform',
         items: [
-          { label: 'Global Overview', path: '/super-admin', icon: LayoutDashboard },
-          { label: 'Institutions', path: '/super-admin/organizations', icon: Building2 },
-          { label: 'Users & Admins', path: '/super-admin/users', icon: UserCog },
+          { label: 'Overview', path: '/super-admin', icon: LayoutDashboard },
+          { label: 'Institution Profile', path: '/super-admin/organizations', icon: Building2 },
+          { label: 'Staff Accounts', path: '/super-admin/users', icon: UserCog },
           { label: 'System Monitoring', path: '/super-admin/monitoring', icon: Activity },
           { label: 'Activity Logs', path: '/super-admin/activity', icon: ScrollText },
           { label: 'Platform Settings', path: '/super-admin/settings', icon: Sliders },
