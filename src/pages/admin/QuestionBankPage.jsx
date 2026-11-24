@@ -1,45 +1,38 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle,
-  BookOpen,
-  Check,
-  CheckCircle2,
-  ClipboardList,
-  Download,
-  Edit3,
-  FileSpreadsheet,
-  Filter,
-  Plus,
-  Search,
-  Trash2,
-  Upload,
-  X,
+  BookOpen, Check, Download, Edit3, FileSpreadsheet, Filter, Plus, Search, Trash2, Upload, X,
 } from 'lucide-react';
-import Badge from '../../components/common/Badge';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
 import InputField from '../../components/common/InputField';
 import Modal from '../../components/common/Modal';
-import SelectDropdown from '../../components/common/SelectDropdown';
-import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from '../../components/common/Table';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
+import PageHeader from '../../components/common/PageHeader';
+import Pagination from '../../components/common/Pagination';
+import Alert from '../../components/common/Alert';
+import EmptyState from '../../components/common/EmptyState';
+import StatusBadge from '../../components/common/StatusBadge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
+import { useToast } from '../../components/common/Toast';
 import { questionBankService, DIFFICULTIES, validateQuestion } from '../../services/questionBankService.js';
 import { examRandomizerService } from '../../services/examRandomizerService.js';
-import { downloadQuestionTemplate, readQuestionImportFile } from '../../utils/questionImport.js';
+import { activityLogService } from '../../services/activityLogService.js';
+import { downloadQuestionTemplate, readQuestionImportFile, QUESTION_IMPORT_HEADERS } from '../../utils/questionImport.js';
+import { usePagination } from '../../utils/usePagination';
+import { useAuth } from '../../context/AuthContext';
 
 const EMPTY_FORM = {
   subject: '', topic: '', statement: '', options: ['', '', '', ''],
   correctOption: null, difficulty: 'Medium', marks: 2, negativeMarks: 0,
 };
-
-const difficultyTone = {
-  Easy: 'success',
-  Medium: 'warning',
-  Hard: 'danger',
-};
+const LETTERS = ['A', 'B', 'C', 'D'];
+const selectCls = 'es-select h-9 w-full rounded-sm border border-slate-300 bg-white pl-3 text-sm text-slate-900 focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]';
 
 export default function QuestionBankPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { notify } = useToast();
   const fileRef = useRef(null);
   const [questions, setQuestions] = useState(() => questionBankService.getQuestions());
   const [search, setSearch] = useState('');
@@ -55,12 +48,9 @@ export default function QuestionBankPage() {
   const [importModal, setImportModal] = useState(false);
   const [importRows, setImportRows] = useState([]);
   const [importErrors, setImportErrors] = useState([]);
-  const [notice, setNotice] = useState(null);
-
-  const showNotice = (message, type = 'success') => {
-    setNotice({ message, type });
-    window.setTimeout(() => setNotice(null), 4000);
-  };
+  const [importFileName, setImportFileName] = useState('');
+  const [isReading, setIsReading] = useState(false);
+  const [confirmSend, setConfirmSend] = useState(false);
 
   const subjects = useMemo(() => [...new Set(questions.map((item) => item.subject))].sort(), [questions]);
   const topics = useMemo(() => [...new Set(
@@ -77,21 +67,18 @@ export default function QuestionBankPage() {
         (!difficultyFilter || item.difficulty === difficultyFilter);
     });
   }, [questions, search, subjectFilter, topicFilter, difficultyFilter]);
+  const { pageItems, paginationProps, resetPage } = usePagination(filteredQuestions, 10);
 
-  const subjectCounts = useMemo(() => {
-    const counts = new Map();
-    questions.forEach((item) => counts.set(item.subject, (counts.get(item.subject) || 0) + 1));
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [questions]);
   const difficultyCounts = useMemo(() => DIFFICULTIES.map((difficulty) => ({
     difficulty,
     count: questions.filter((item) => item.difficulty === difficulty).length,
   })), [questions]);
-  const recentQuestions = useMemo(() => [...questions]
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 5), [questions]);
   const readyImportRows = importRows.filter((row) => row.status === 'Ready');
+  const importSummary = useMemo(() => ['Ready', 'Duplicate', 'Invalid', 'Imported']
+    .map((status) => [status, importRows.filter((row) => row.status === status).length]), [importRows]);
 
   const refreshQuestions = () => setQuestions(questionBankService.getQuestions());
+  const log = (action, target, details) => activityLogService.log({ action, category: 'question-bank', actor: user, target, details });
 
   const openCreate = () => {
     setEditingQuestion(null);
@@ -124,10 +111,11 @@ export default function QuestionBankPage() {
       return;
     }
     try {
-      questionBankService.saveQuestion(form, editingQuestion?.id ?? null);
+      const saved = questionBankService.saveQuestion(form, editingQuestion?.id ?? null);
       refreshQuestions();
       setQuestionModal(false);
-      showNotice(editingQuestion ? 'Question updated.' : 'Question added to the bank.');
+      log(editingQuestion ? 'Edited question' : 'Added question', `Q${saved.id}`, saved.statement.slice(0, 80));
+      notify(editingQuestion ? `Question ${saved.id} updated.` : `Question ${saved.id} added to the bank.`);
     } catch (error) {
       setFormErrors([error.message]);
     }
@@ -138,15 +126,16 @@ export default function QuestionBankPage() {
     questionBankService.deleteQuestion(deleteTarget.id);
     setSelectedIds((current) => current.filter((id) => id !== deleteTarget.id));
     refreshQuestions();
+    log('Deleted question', `Q${deleteTarget.id}`, deleteTarget.statement.slice(0, 80));
+    notify(`Question ${deleteTarget.id} deleted.`);
     setDeleteTarget(null);
-    showNotice('Question deleted.');
   };
 
   const toggleSelected = (id) => {
     setSelectedIds((current) => {
       if (current.includes(id)) return current.filter((selectedId) => selectedId !== id);
       if (current.length >= 25) {
-        showNotice('Select no more than 25 questions for an examination.', 'error');
+        notify('An examination uses exactly 25 questions. Deselect one first.', 'warning');
         return current;
       }
       return [...current, id];
@@ -168,16 +157,20 @@ export default function QuestionBankPage() {
         marks: Number(question.marks),
         negativeMarks: Number(question.negativeMarks),
       })));
-      showNotice('The selected 25 questions were sent to the exam generator. Active attempts keep their saved paper.');
+      log('Replaced examination question set', '25 questions', 'Patterns A–J regenerated');
+      notify('The 25 questions were sent to the generator and patterns A–J were regenerated. Active attempts keep their saved paper.');
+      setConfirmSend(false);
       navigate('/admin/exams');
     } catch (error) {
-      showNotice(error.message || 'Could not update the exam generator.', 'error');
+      setConfirmSend(false);
+      notify(error.message || 'Could not update the exam generator.', 'error');
     }
   };
 
   const openImport = () => {
     setImportRows([]);
     setImportErrors([]);
+    setImportFileName('');
     setImportModal(true);
   };
 
@@ -186,6 +179,9 @@ export default function QuestionBankPage() {
     event.target.value = '';
     if (!file) return;
     setImportRows([]);
+    setImportErrors([]);
+    setImportFileName(file.name);
+    setIsReading(true);
     try {
       const preview = await readQuestionImportFile(file, questions);
       setImportRows(preview.rows);
@@ -195,6 +191,8 @@ export default function QuestionBankPage() {
       }
     } catch (error) {
       setImportErrors([error.message || 'Could not read this file.']);
+    } finally {
+      setIsReading(false);
     }
   };
 
@@ -205,7 +203,8 @@ export default function QuestionBankPage() {
       setImportRows((current) => current.map((row) => row.status === 'Ready'
         ? { ...row, status: 'Imported' }
         : row));
-      showNotice(`Imported ${imported.length} question${imported.length === 1 ? '' : 's'}.`);
+      log('Imported questions', importFileName, `${imported.length} question(s)`);
+      notify(`Imported ${imported.length} question${imported.length === 1 ? '' : 's'}.`);
       if (!imported.length) setImportModal(false);
     } catch (error) {
       setImportErrors([error.message]);
@@ -217,234 +216,337 @@ export default function QuestionBankPage() {
     setSubjectFilter('');
     setTopicFilter('');
     setDifficultyFilter('');
+    resetPage();
   };
+  const filtersActive = search || subjectFilter || topicFilter || difficultyFilter;
+
+  const updateOption = (index, value) => setForm((current) => ({
+    ...current,
+    options: current.options.map((option, i) => (i === index ? value : option)),
+  }));
 
   return (
-    <div className="space-y-6 text-slate-800 font-sans">
-      {notice && (
-        <div className={`fixed top-4 right-4 z-[60] flex max-w-lg items-start gap-2 rounded border px-4 py-3 text-xs shadow-lg ${
-          notice.type === 'error' ? 'border-rose-300 bg-rose-50 text-rose-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'
-        }`} role="status">
-          {notice.type === 'error' ? <AlertTriangle className="h-4 w-4 shrink-0" /> : <CheckCircle2 className="h-4 w-4 shrink-0" />}
-          <span>{notice.message}</span>
-          <button type="button" aria-label="Dismiss notification" onClick={() => setNotice(null)}><X className="h-3.5 w-3.5" /></button>
+    <div className="space-y-6 pb-20">
+      <PageHeader
+        eyebrow="Examination Office"
+        title="Question Bank"
+        description="Create, import and review multiple-choice questions. Select exactly 25 to form an examination's master question set."
+        actions={(
+          <>
+            <Button variant="secondary" icon={Upload} onClick={openImport}>Import CSV / Excel</Button>
+            <Button icon={Plus} onClick={openCreate}>Add question</Button>
+          </>
+        )}
+      />
+
+      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 lg:grid-cols-5" aria-label="Question bank summary">
+        <div className="bg-white p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Total questions</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{questions.length}</p>
+        </div>
+        <div className="bg-white p-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Subjects</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{subjects.length}</p>
+        </div>
+        {difficultyCounts.map(({ difficulty, count }) => (
+          <div key={difficulty} className="bg-white p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{difficulty}</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{count}</p>
+            <div className="mt-2 h-1 bg-slate-100" aria-hidden="true">
+              <div className={`h-1 ${difficulty === 'Easy' ? 'bg-emerald-600' : difficulty === 'Medium' ? 'bg-amber-500' : 'bg-rose-600'}`} style={{ width: `${questions.length ? (count / questions.length) * 100 : 0}%` }} />
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <Card bodyClassName="p-0">
+        <div className="grid gap-3 border-b border-slate-200 p-4 md:grid-cols-2 xl:grid-cols-[1.6fr_1fr_1fr_1fr_auto]">
+          <InputField
+            aria-label="Search questions"
+            placeholder="Search statement, option, subject or topic"
+            prefixIcon={Search}
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); resetPage(); }}
+          />
+          <select aria-label="Filter by subject" className={selectCls} value={subjectFilter} onChange={(e) => { setSubjectFilter(e.target.value); setTopicFilter(''); resetPage(); }}>
+            <option value="">All subjects</option>
+            {subjects.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select aria-label="Filter by topic" className={selectCls} value={topicFilter} onChange={(e) => { setTopicFilter(e.target.value); resetPage(); }}>
+            <option value="">All topics</option>
+            {topics.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <select aria-label="Filter by difficulty" className={selectCls} value={difficultyFilter} onChange={(e) => { setDifficultyFilter(e.target.value); resetPage(); }}>
+            <option value="">All difficulties</option>
+            {DIFFICULTIES.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <Button variant="ghost" icon={Filter} onClick={resetFilters} disabled={!filtersActive}>Clear</Button>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-xs text-slate-600">
+          <span><strong className="text-slate-900 tabular-nums">{filteredQuestions.length}</strong> of {questions.length} questions</span>
+          <span className="tabular-nums">Selected for examination: <strong className="text-[#1E3A5F]">{selectedIds.length}/25</strong></span>
+        </div>
+
+        {filteredQuestions.length === 0 ? (
+          <EmptyState
+            icon={BookOpen}
+            title={questions.length ? 'No questions match these filters' : 'The question bank is empty'}
+            description={questions.length ? 'Adjust or clear the filters to see more questions.' : 'Add questions manually or import them from a CSV or Excel file.'}
+            action={questions.length ? <Button variant="secondary" size="sm" onClick={resetFilters}>Clear filters</Button> : <Button size="sm" icon={Plus} onClick={openCreate}>Add question</Button>}
+          />
+        ) : (
+          <>
+            <Table className="rounded-none border-x-0 border-b-0">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12"><span className="sr-only">Select</span></TableHead>
+                  <TableHead className="w-14">ID</TableHead>
+                  <TableHead>Question</TableHead>
+                  <TableHead className="hidden md:table-cell">Subject / topic</TableHead>
+                  <TableHead>Difficulty</TableHead>
+                  <TableHead align="center" className="hidden sm:table-cell">Marks</TableHead>
+                  <TableHead align="right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pageItems.map((question) => {
+                  const selected = selectedIds.includes(question.id);
+                  return (
+                    <TableRow key={question.id} isSelected={selected}>
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select question ${question.id} for the examination`}
+                          checked={selected}
+                          onChange={() => toggleSelected(question.id)}
+                          className="h-4 w-4 rounded-sm border-slate-300 accent-[#1E3A5F]"
+                        />
+                      </TableCell>
+                      <TableCell className="font-mono text-slate-500">{question.id}</TableCell>
+                      <TableCell className="max-w-xl">
+                        <p className="text-[13px] font-medium leading-snug text-slate-900">{question.statement}</p>
+                        <ol className="mt-1.5 grid gap-x-4 gap-y-0.5 text-[11px] text-slate-500 sm:grid-cols-2">
+                          {question.options.map((option, index) => (
+                            <li key={index} className="truncate">
+                              <span className="font-semibold">{LETTERS[index]}.</span> {option}
+                            </li>
+                          ))}
+                        </ol>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        <p className="text-slate-800">{question.subject}</p>
+                        <p className="text-[11px] text-slate-500">{question.topic}</p>
+                      </TableCell>
+                      <TableCell><StatusBadge status={question.difficulty} dot={false} /></TableCell>
+                      <TableCell align="center" className="hidden tabular-nums sm:table-cell">
+                        {question.marks}{Number(question.negativeMarks) > 0 && <span className="text-rose-700"> / −{question.negativeMarks}</span>}
+                      </TableCell>
+                      <TableCell align="right">
+                        <div className="flex justify-end gap-1">
+                          <button type="button" aria-label={`Edit question ${question.id}`} onClick={() => openEdit(question)} className="rounded-sm p-2 text-slate-500 hover:bg-slate-100 hover:text-[#1E3A5F]"><Edit3 className="h-4 w-4" /></button>
+                          <button type="button" aria-label={`Delete question ${question.id}`} onClick={() => setDeleteTarget(question)} className="rounded-sm p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700"><Trash2 className="h-4 w-4" /></button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+            <Pagination {...paginationProps} pageSizeOptions={[10, 25, 50]} />
+          </>
+        )}
+      </Card>
+
+      {selectedIds.length > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-300 bg-white px-4 py-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] lg:left-64">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-1.5 w-32 bg-slate-100" aria-hidden="true">
+                <div className="h-1.5 bg-[#1E3A5F]" style={{ width: `${(selectedIds.length / 25) * 100}%` }} />
+              </div>
+              <p className="text-xs text-slate-700" aria-live="polite">
+                <strong className="tabular-nums text-slate-900">{selectedIds.length}</strong> of 25 questions selected
+                {selectedIds.length < 25 && <span className="text-slate-500"> · {25 - selectedIds.length} more needed</span>}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" icon={X} onClick={() => setSelectedIds([])}>Clear selection</Button>
+              <Button size="sm" icon={FileSpreadsheet} disabled={selectedIds.length !== 25} onClick={() => setConfirmSend(true)}>Use as examination set</Button>
+            </div>
+          </div>
         </div>
       )}
 
-      <header className="flex flex-col gap-4 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">Admin Question Bank</h1>
-          <p className="mt-1 text-xs text-slate-500">Manage validated MCQs, import question sets, and select a 25-question exam master.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" icon={Download} onClick={downloadQuestionTemplate}>Download template</Button>
-          <Button variant="secondary" icon={Upload} onClick={openImport}>Import questions</Button>
-          <Button variant="primary" icon={Plus} onClick={openCreate}>Add question</Button>
-        </div>
-      </header>
-
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Question bank summary">
-        <Card bodyClassName="p-4">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Total questions</p>
-          <p className="mt-2 font-mono text-3xl font-bold text-[#1E3A5F]">{questions.length}</p>
-          <p className="mt-1 text-xs text-slate-500">Validated MCQs in this browser</p>
-        </Card>
-        <Card bodyClassName="p-4">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">By subject</p>
-          <div className="mt-2 max-h-24 space-y-1.5 overflow-y-auto">
-            {subjectCounts.map(([subject, count]) => (
-              <div key={subject} className="flex justify-between gap-2 text-xs">
-                <span className="truncate text-slate-700">{subject}</span><span className="font-mono font-semibold text-[#1E3A5F]">{count}</span>
-              </div>
-            ))}
-            {!subjectCounts.length && <p className="text-xs text-slate-400">No questions yet.</p>}
+      <Modal
+        isOpen={questionModal}
+        onClose={() => setQuestionModal(false)}
+        title={editingQuestion ? `Edit question ${editingQuestion.id}` : 'Add question'}
+        subtitle="Four distinct options and exactly one correct answer are required."
+        maxWidth="max-w-3xl"
+        footer={(
+          <>
+            <Button variant="secondary" onClick={() => setQuestionModal(false)}>Cancel</Button>
+            <Button type="submit" form="question-form" icon={Check}>{editingQuestion ? 'Save changes' : 'Add question'}</Button>
+          </>
+        )}
+      >
+        <form id="question-form" onSubmit={submitQuestion} className="space-y-5" noValidate>
+          {formErrors.length > 0 && (
+            <Alert tone="danger" title="Please fix the following">
+              <ul className="list-disc pl-4">{formErrors.map((error) => <li key={error}>{error}</li>)}</ul>
+            </Alert>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <InputField label="Subject" required list="qb-subjects" value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="e.g. Software Engineering" />
+            <InputField label="Topic / unit" required list="qb-topics" value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} placeholder="e.g. Unit 2 – Design Patterns" />
+            <datalist id="qb-subjects">{subjects.map((s) => <option key={s} value={s} />)}</datalist>
+            <datalist id="qb-topics">{[...new Set(questions.map((q) => q.topic))].map((t) => <option key={t} value={t} />)}</datalist>
           </div>
-        </Card>
-        <Card bodyClassName="p-4">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">By difficulty</p>
-          <div className="mt-2 space-y-1.5">
-            {difficultyCounts.map(({ difficulty, count }) => (
-              <div key={difficulty} className="flex items-center justify-between text-xs">
-                <span className="text-slate-700">{difficulty}</span><span className="font-mono font-semibold">{count}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-        <Card bodyClassName="p-4">
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Recently added</p>
-            <ClipboardList className="h-4 w-4 text-slate-400" />
-          </div>
-          <div className="mt-2 space-y-1.5">
-            {recentQuestions.map((question) => (
-              <p key={question.id} className="truncate text-xs text-slate-700" title={question.statement}>{question.statement}</p>
-            ))}
-            {!recentQuestions.length && <p className="text-xs text-slate-400">No questions yet.</p>}
-          </div>
-        </Card>
-      </section>
-
-      <Card className="overflow-hidden" bodyClassName="p-0">
-        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
-            <h2 className="text-sm font-bold text-slate-900">Question management</h2>
-            <p className="mt-1 text-xs text-slate-500">Search, filter, edit, or select exactly 25 questions for the exam generator.</p>
+            <label htmlFor="q-statement" className="mb-1 block text-xs font-medium text-slate-800">Question statement <span className="text-red-600">*</span></label>
+            <textarea id="q-statement" rows={3} value={form.statement} onChange={(e) => setForm({ ...form, statement: e.target.value })} className="w-full rounded-sm border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]" placeholder="Type the question exactly as candidates should see it" />
           </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1.5fr)_repeat(3,minmax(150px,1fr))_auto]">
-            <div className="relative">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-              <input aria-label="Search questions" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search question bank" className="h-9 w-full rounded border border-slate-300 bg-white pl-9 pr-3 text-xs outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]" />
-            </div>
-            <SelectDropdown aria-label="Filter by subject" value={subjectFilter} onChange={(event) => { setSubjectFilter(event.target.value); setTopicFilter(''); }} options={subjects} placeholder="All subjects" selectClassName="h-9" />
-            <SelectDropdown aria-label="Filter by topic" value={topicFilter} onChange={(event) => setTopicFilter(event.target.value)} options={topics} placeholder="All topics" selectClassName="h-9" />
-            <SelectDropdown aria-label="Filter by difficulty" value={difficultyFilter} onChange={(event) => setDifficultyFilter(event.target.value)} options={DIFFICULTIES} placeholder="All difficulties" selectClassName="h-9" />
-            <Button variant="ghost" icon={Filter} onClick={resetFilters}>Reset</Button>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-2 border-b border-slate-200 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2 text-xs text-slate-600">
-            <BookOpen className="h-4 w-4 text-[#1E3A5F]" />
-            <span><strong className="font-mono text-[#1E3A5F]">{selectedIds.length}/25</strong> selected</span>
-            <span className="text-slate-400">•</span><span>{filteredQuestions.length} results</span>
-          </div>
-          <Button variant="primary" icon={FileSpreadsheet} disabled={selectedIds.length !== 25} onClick={sendQuestionsToGenerator}>
-            Send 25 to exam generator
-          </Button>
-        </div>
-
-        <Table>
-          <TableHeader>
-            <tr>
-              <TableHead className="w-10">Select</TableHead>
-              <TableHead>Question</TableHead>
-              <TableHead>Subject / Topic</TableHead>
-              <TableHead>Difficulty</TableHead>
-              <TableHead align="center">Marks</TableHead>
-              <TableHead align="right">Actions</TableHead>
-            </tr>
-          </TableHeader>
-          <TableBody>
-            {filteredQuestions.length === 0 ? <TableEmpty colSpan={6} message="No questions match these filters." /> : filteredQuestions.map((question) => (
-              <TableRow key={question.id}>
-                <TableCell>
-                  <input type="checkbox" aria-label={`Select question ${question.id}`} checked={selectedIds.includes(question.id)} onChange={() => toggleSelected(question.id)} className="h-4 w-4 rounded border-slate-300 text-[#1E3A5F] focus:ring-[#1E3A5F]" />
-                </TableCell>
-                <TableCell className="min-w-[280px] max-w-xl">
-                  <p className="line-clamp-2 font-medium text-slate-900" title={question.statement}>{question.statement}</p>
-                  <p className="mt-1 text-[11px] text-slate-500">{question.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option}`).join('  ·  ')}</p>
-                </TableCell>
-                <TableCell className="min-w-[160px]">
-                  <p className="font-medium text-slate-800">{question.subject}</p>
-                  <p className="mt-1 text-[11px] text-slate-500">{question.topic}</p>
-                </TableCell>
-                <TableCell><Badge variant={difficultyTone[question.difficulty] || 'neutral'}>{question.difficulty}</Badge></TableCell>
-                <TableCell align="center"><span className="font-mono">{question.marks}</span><span className="text-slate-400"> / -{question.negativeMarks}</span></TableCell>
-                <TableCell align="right">
-                  <div className="flex justify-end gap-1">
-                    <button type="button" aria-label={`Edit question ${question.id}`} onClick={() => openEdit(question)} className="rounded p-2 text-slate-500 hover:bg-blue-50 hover:text-[#1E3A5F]"><Edit3 className="h-4 w-4" /></button>
-                    <button type="button" aria-label={`Delete question ${question.id}`} onClick={() => setDeleteTarget(question)} className="rounded p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700"><Trash2 className="h-4 w-4" /></button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
-
-      <Modal isOpen={questionModal} onClose={() => setQuestionModal(false)} title={editingQuestion ? 'Edit question' : 'Add a question'} subtitle="All four options and exactly one correct answer are required." maxWidth="max-w-3xl" footer={null}>
-        <form onSubmit={submitQuestion} className="space-y-4">
-          {formErrors.length > 0 && <div className="rounded border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><ul className="list-inside list-disc space-y-1">{formErrors.map((error) => <li key={error}>{error}</li>)}</ul></div>}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <InputField label="Subject" required value={form.subject} onChange={(event) => setForm({ ...form, subject: event.target.value })} placeholder="e.g. Software Engineering" />
-            <InputField label="Topic" required value={form.topic} onChange={(event) => setForm({ ...form, topic: event.target.value })} placeholder="e.g. Design Patterns" />
-          </div>
-          <label className="block text-xs font-semibold text-slate-700">Question statement <span className="text-rose-600">*</span>
-            <textarea required rows={3} value={form.statement} onChange={(event) => setForm({ ...form, statement: event.target.value })} className="mt-1.5 w-full rounded border border-slate-300 p-3 text-xs font-normal text-slate-900 outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]" placeholder="Enter the full question statement" />
-          </label>
           <fieldset>
-            <legend className="mb-2 text-xs font-semibold text-slate-700">Answer options <span className="text-rose-600">*</span> — choose the correct answer</legend>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {form.options.map((option, index) => (
-                <div key={index} className={`flex items-center gap-2 rounded border p-2 ${form.correctOption === index ? 'border-emerald-400 bg-emerald-50/60' : 'border-slate-200'}`}>
-                  <input type="radio" name="correctOption" aria-label={`Mark option ${String.fromCharCode(65 + index)} correct`} checked={form.correctOption === index} onChange={() => setForm({ ...form, correctOption: index })} className="h-4 w-4 accent-emerald-700" />
-                  <span className="w-5 shrink-0 font-mono font-bold text-slate-500">{String.fromCharCode(65 + index)}</span>
-                  <input required value={option} onChange={(event) => setForm({ ...form, options: form.options.map((value, optionIndex) => optionIndex === index ? event.target.value : value) })} aria-label={`Option ${String.fromCharCode(65 + index)}`} className="h-8 min-w-0 flex-1 border-0 bg-transparent text-xs outline-none placeholder:text-slate-400" placeholder={`Option ${String.fromCharCode(65 + index)}`} />
-                  {form.correctOption === index && <Check className="h-4 w-4 shrink-0 text-emerald-700" />}
-                </div>
-              ))}
+            <legend className="mb-1 text-xs font-medium text-slate-800">Options <span className="text-red-600">*</span> <span className="font-normal text-slate-500">— select the correct answer</span></legend>
+            <div className="space-y-2">
+              {form.options.map((option, index) => {
+                const correct = form.correctOption === index;
+                return (
+                  <div key={index} className={`flex items-center gap-2 rounded-sm border p-1.5 ${correct ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white'}`}>
+                    <label className="flex shrink-0 cursor-pointer items-center gap-2 pl-1.5 pr-1">
+                      <input type="radio" name="correct-option" checked={correct} onChange={() => setForm({ ...form, correctOption: index })} className="h-4 w-4 accent-emerald-700" aria-label={`Mark option ${LETTERS[index]} as correct`} />
+                      <span className="w-4 text-xs font-bold text-slate-600">{LETTERS[index]}</span>
+                    </label>
+                    <input
+                      value={option}
+                      onChange={(e) => updateOption(index, e.target.value)}
+                      aria-label={`Option ${LETTERS[index]}`}
+                      placeholder={`Option ${LETTERS[index]}`}
+                      className="h-9 min-w-0 flex-1 rounded-sm border border-slate-300 bg-white px-3 text-sm focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]"
+                    />
+                    {correct && <span className="hidden pr-2 text-[11px] font-semibold text-emerald-800 sm:inline">Correct</span>}
+                  </div>
+                );
+              })}
             </div>
           </fieldset>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <SelectDropdown label="Difficulty" required value={form.difficulty} onChange={(event) => setForm({ ...form, difficulty: event.target.value })} options={DIFFICULTIES} placeholder="Select difficulty" />
-            <InputField label="Marks per question" type="number" min="0.01" step="0.01" required value={form.marks} onChange={(event) => setForm({ ...form, marks: event.target.value })} />
-            <InputField label="Negative marks" type="number" min="0" step="0.01" required value={form.negativeMarks} onChange={(event) => setForm({ ...form, negativeMarks: event.target.value })} />
-          </div>
-          <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
-            <Button variant="secondary" onClick={() => setQuestionModal(false)}>Cancel</Button>
-            <Button variant="primary" type="submit" icon={Check}>{editingQuestion ? 'Save changes' : 'Add question'}</Button>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <fieldset>
+              <legend className="mb-1 text-xs font-medium text-slate-800">Difficulty</legend>
+              <div className="grid grid-cols-3 overflow-hidden rounded-sm border border-slate-300">
+                {DIFFICULTIES.map((d) => (
+                  <label key={d} className={`cursor-pointer py-2 text-center text-xs font-semibold ${form.difficulty === d ? 'bg-[#1E3A5F] text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`}>
+                    <input type="radio" name="difficulty" value={d} checked={form.difficulty === d} onChange={() => setForm({ ...form, difficulty: d })} className="sr-only" />
+                    {d}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <InputField label="Marks" type="number" min="0.5" step="0.5" required value={form.marks} onChange={(e) => setForm({ ...form, marks: e.target.value })} />
+            <InputField label="Negative marks" type="number" min="0" step="0.25" value={form.negativeMarks} onChange={(e) => setForm({ ...form, negativeMarks: e.target.value })} helperText="0 for no penalty" />
           </div>
         </form>
       </Modal>
 
-      <Modal isOpen={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)} title="Delete question?" subtitle="This action removes the question from this browser’s question bank." footer={null}>
-        <p className="text-xs leading-relaxed text-slate-600">{deleteTarget?.statement}</p>
-        <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-3">
-          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-          <Button variant="danger" icon={Trash2} onClick={confirmDelete}>Delete question</Button>
-        </div>
-      </Modal>
+      <ConfirmDialog
+        isOpen={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+        tone="danger"
+        title="Delete question?"
+        confirmLabel="Delete question"
+        description="This permanently removes the question from the bank. Examinations already generated keep their own copy."
+      >
+        {deleteTarget && <p className="rounded-sm border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800">{deleteTarget.statement}</p>}
+      </ConfirmDialog>
 
-      <Modal isOpen={importModal} onClose={() => setImportModal(false)} title="Import questions" subtitle="Upload CSV or Excel, inspect row validation, then confirm the valid rows." maxWidth="max-w-5xl" footer={null}>
-        <div className="space-y-4">
-          <div className="flex flex-col gap-3 rounded border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs font-semibold text-slate-800">Use the import template</p>
-              <p className="mt-1 text-[11px] text-slate-500">Correct Answer accepts A–D or 1–4. Difficulty must be Easy, Medium, or Hard.</p>
+      <ConfirmDialog
+        isOpen={confirmSend}
+        onClose={() => setConfirmSend(false)}
+        onConfirm={sendQuestionsToGenerator}
+        tone="warning"
+        title="Replace the examination question set?"
+        confirmLabel="Replace and regenerate"
+        description="The selected 25 questions become the master set and patterns A–J are regenerated immediately. Candidates already writing keep their saved paper."
+      />
+
+      <Modal
+        isOpen={importModal}
+        onClose={() => setImportModal(false)}
+        title="Import questions from CSV or Excel"
+        subtitle="Rows are validated before anything is added to the bank."
+        maxWidth="max-w-5xl"
+        footer={(
+          <>
+            <Button variant="secondary" onClick={() => setImportModal(false)}>Close</Button>
+            {importRows.length > 0 && <Button variant="secondary" onClick={() => { setImportRows([]); setImportErrors([]); setImportFileName(''); }}>Choose another file</Button>}
+            <Button icon={Check} disabled={!readyImportRows.length} onClick={confirmImport}>Import {readyImportRows.length} valid question{readyImportRows.length === 1 ? '' : 's'}</Button>
+          </>
+        )}
+      >
+        <ol className="mb-5 grid gap-3 sm:grid-cols-3">
+          {[
+            ['1', 'Download the template', 'Required columns in the right order.'],
+            ['2', 'Upload your file', '.csv, .xlsx or .xls — first sheet is read.'],
+            ['3', 'Review and import', 'Only rows marked Ready are imported.'],
+          ].map(([n, title, text]) => (
+            <li key={n} className="flex gap-3 rounded-sm border border-slate-200 bg-slate-50 p-3">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-[#1E3A5F] text-[11px] font-bold text-white">{n}</span>
+              <span><span className="block text-xs font-semibold text-slate-900">{title}</span><span className="text-[11px] text-slate-600">{text}</span></span>
+            </li>
+          ))}
+        </ol>
+
+        <div className="flex flex-col items-start gap-3 rounded-sm border border-dashed border-slate-300 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-xs text-slate-600">
+            <p className="font-semibold text-slate-900">{importFileName || 'No file selected'}</p>
+            <p className="mt-0.5">Columns: {QUESTION_IMPORT_HEADERS.join(', ')}. Correct Answer accepts A–D or 1–4.</p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="secondary" size="sm" icon={Download} onClick={downloadQuestionTemplate}>Template</Button>
+            <Button size="sm" icon={Upload} isLoading={isReading} onClick={() => fileRef.current?.click()}>Choose file</Button>
+          </div>
+          <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="sr-only" onChange={handleFile} aria-label="Question import file" />
+        </div>
+
+        {importErrors.length > 0 && (
+          <Alert tone="danger" title="The file could not be processed" className="mt-4">
+            <ul className="list-disc pl-4">{importErrors.map((error) => <li key={error}>{error}</li>)}</ul>
+          </Alert>
+        )}
+
+        {importRows.length > 0 && (
+          <div className="mt-4 space-y-3">
+            <div className="flex flex-wrap gap-2 text-xs">
+              {importSummary.filter(([, n]) => n).map(([status, n]) => <StatusBadge key={status} status={status}>{n} {status.toLowerCase()}</StatusBadge>)}
             </div>
-            <div className="flex gap-2">
-              <Button variant="secondary" icon={Download} onClick={downloadQuestionTemplate}>Download CSV template</Button>
-              <Button variant="primary" icon={Upload} onClick={() => fileRef.current?.click()}>Choose file</Button>
-              <input ref={fileRef} className="hidden" type="file" accept=".csv,.xlsx,.xls" onChange={handleFile} />
+            <div className="max-h-80 overflow-auto rounded-sm border border-slate-200">
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2">Row</th>
+                    <th className="px-3 py-2">Question</th>
+                    <th className="px-3 py-2">Answer</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Issues</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {importRows.map((row) => (
+                    <tr key={row.rowNumber} className={row.status === 'Invalid' ? 'bg-rose-50/40' : ''}>
+                      <td className="px-3 py-2 font-mono text-slate-500">{row.rowNumber}</td>
+                      <td className="max-w-md px-3 py-2 text-slate-800">{row.question.statement || <em className="text-slate-400">empty</em>}</td>
+                      <td className="px-3 py-2 font-mono">{Number.isInteger(row.question.correctOption) ? LETTERS[row.question.correctOption] : '—'}</td>
+                      <td className="px-3 py-2"><StatusBadge status={row.status} size="sm" /></td>
+                      <td className="px-3 py-2 text-[11px] text-rose-700">{row.errors.join(' ') || (row.duplicate ? 'Already in the bank or repeated in file.' : '')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-          {importErrors.length > 0 && <div className="rounded border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{importErrors.map((error) => <p key={error}>{error}</p>)}</div>}
-          {importRows.length > 0 && (
-            <>
-              <div className="flex flex-wrap gap-2 text-xs">
-                <Badge variant="success">{readyImportRows.length} ready</Badge>
-                <Badge variant="warning">{importRows.filter((row) => row.status === 'Duplicate').length} duplicates</Badge>
-                <Badge variant="danger">{importRows.filter((row) => row.status === 'Invalid').length} with errors</Badge>
-                <Badge variant="neutral">{importRows.filter((row) => row.status === 'Imported').length} imported</Badge>
-              </div>
-              <Table>
-                <TableHeader><tr><TableHead>Row</TableHead><TableHead>Question</TableHead><TableHead>Subject / Topic</TableHead><TableHead>Options / key</TableHead><TableHead>Level / marks</TableHead><TableHead>Status / validation</TableHead></tr></TableHeader>
-                <TableBody>
-                  {importRows.map((row) => (
-                    <TableRow key={row.rowNumber}>
-                      <TableCell>{row.rowNumber}</TableCell>
-                      <TableCell className="min-w-[220px] max-w-sm"><p className="line-clamp-2">{row.question.statement || '—'}</p></TableCell>
-                      <TableCell>{row.question.subject || '—'}<p className="mt-1 text-[11px] text-slate-500">{row.question.topic || '—'}</p></TableCell>
-                      <TableCell className="min-w-[190px]">
-                        {row.question.options.map((option, index) => <p key={index} className={row.question.correctOption === index ? 'font-semibold text-emerald-800' : 'text-slate-500'}>{String.fromCharCode(65 + index)}. {option || '—'}{row.question.correctOption === index ? ' ✓' : ''}</p>)}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">{row.question.difficulty || '—'}<p className="mt-1 text-[11px] text-slate-500">{row.question.marks || '—'} marks · −{row.question.negativeMarks ?? 0}</p></TableCell>
-                      <TableCell className="min-w-[220px]">
-                        <Badge variant={row.status === 'Ready' || row.status === 'Imported' ? 'success' : row.status === 'Duplicate' ? 'warning' : 'danger'}>{row.status}</Badge>
-                        {row.duplicate && <p className="mt-1 text-[11px] text-amber-800">Duplicate of an existing or earlier file question.</p>}
-                        {row.errors.map((error) => <p key={error} className="mt-1 text-[11px] text-rose-700">{error}</p>)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
-                <Button variant="secondary" onClick={() => { setImportRows([]); setImportErrors([]); }}>Clear preview</Button>
-                <Button variant="primary" icon={Check} disabled={!readyImportRows.length} onClick={confirmImport}>Import {readyImportRows.length} valid questions</Button>
-              </div>
-            </>
-          )}
-        </div>
+        )}
       </Modal>
     </div>
   );

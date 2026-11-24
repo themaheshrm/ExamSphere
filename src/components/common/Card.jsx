@@ -16,11 +16,11 @@ export default function Card({
 }) {
   return (
     <div
-      className={`rounded border border-slate-200 bg-white shadow-xs transition-shadow ${className}`}
+      className={`rounded-sm border border-slate-200 bg-white ${className}`}
     >
       {(title || subtitle || action) && (
         <div
-          className={`flex items-start sm:items-center justify-between border-b border-slate-100 px-5 py-3.5 gap-3 ${headerClassName}`}
+          className={`flex items-start sm:items-center justify-between border-b border-slate-200 px-5 py-3.5 gap-3 ${headerClassName}`}
         >
           <div>
             {title && (
@@ -36,10 +36,10 @@ export default function Card({
         </div>
       )}
 
-      <div className={`p-5 ${bodyClassName}`}>{children}</div>
+      <div className={`${/(^|\s)p[xy]?-/.test(bodyClassName) ? '' : 'p-5'} ${bodyClassName}`}>{children}</div>
 
       {footer && (
-        <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-xs text-slate-600 rounded-b">
+        <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-xs text-slate-600 rounded-b-sm">
           {footer}
         </div>
       )}

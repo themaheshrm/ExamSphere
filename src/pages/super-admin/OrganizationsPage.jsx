@@ -1,57 +1,149 @@
-import React from 'react';
-import Card from '../../components/common/Card';
+import React, { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Building2, Edit3, Plus, Search } from 'lucide-react';
 import Button from '../../components/common/Button';
-import Badge from '../../components/common/Badge';
-import { Plus, Search, Building } from 'lucide-react';
+import Card from '../../components/common/Card';
+import InputField from '../../components/common/InputField';
+import Modal from '../../components/common/Modal';
+import ConfirmDialog from '../../components/common/ConfirmDialog';
+import PageHeader from '../../components/common/PageHeader';
+import EmptyState from '../../components/common/EmptyState';
+import StatusBadge from '../../components/common/StatusBadge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
+import { useToast } from '../../components/common/Toast';
+import { platformService } from '../../services/platformService';
+import { activityLogService } from '../../services/activityLogService';
+import { useAuth } from '../../context/AuthContext';
+import { formatDate } from '../../utils/format';
+
+const EMPTY = { code: '', name: '', city: '', domain: '', contactEmail: '', status: 'Active' };
 
 export default function OrganizationsPage() {
-  const tenants = [
-    { name: 'Apex University System', domain: 'apex.examsphere.io', plan: 'Enterprise', created: 'Oct 14, 2025' },
-    { name: 'Imperial Engineering College', domain: 'iec.examsphere.io', plan: 'Pro', created: 'Nov 02, 2025' },
-    { name: 'National Medical Council', domain: 'nmc-gov.examsphere.io', plan: 'Enterprise Dedicated', created: 'Jan 10, 2026' },
-  ];
+  const { user } = useAuth();
+  const { notify } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [institutions, setInstitutions] = useState(() => platformService.listInstitutions());
+  const users = platformService.listUsers();
+  const [search, setSearch] = useState('');
+  const [editing, setEditing] = useState(() => (searchParams.get('new') ? EMPTY : null));
+  const [errors, setErrors] = useState({});
+  const [statusTarget, setStatusTarget] = useState(null);
+
+  const term = search.trim().toLowerCase();
+  const shown = institutions.filter((i) => !term || `${i.name} ${i.code} ${i.city} ${i.domain}`.toLowerCase().includes(term));
+
+  const close = () => {
+    setEditing(null);
+    setErrors({});
+    if (searchParams.get('new')) setSearchParams({});
+  };
+
+  const save = (event) => {
+    event.preventDefault();
+    try {
+      const saved = platformService.saveInstitution(editing);
+      activityLogService.log({ action: editing.id ? 'Updated institution' : 'Registered institution', category: 'institution', actor: user, target: saved.code, details: saved.name });
+      notify(editing.id ? `${saved.name} updated.` : `${saved.name} registered.`);
+      setInstitutions(platformService.listInstitutions());
+      close();
+    } catch (error) {
+      setErrors(error.fieldErrors || {});
+    }
+  };
+
+  const toggleStatus = () => {
+    const next = statusTarget.status === 'Active' ? 'Suspended' : 'Active';
+    platformService.saveInstitution({ ...statusTarget, status: next });
+    activityLogService.log({ action: next === 'Suspended' ? 'Suspended institution' : 'Reactivated institution', category: 'institution', actor: user, target: statusTarget.code, severity: next === 'Suspended' ? 'warning' : 'info' });
+    notify(`${statusTarget.name} ${next === 'Suspended' ? 'suspended' : 'reactivated'}.`, next === 'Suspended' ? 'warning' : 'success');
+    setInstitutions(platformService.listInstitutions());
+    setStatusTarget(null);
+  };
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Institutions & Organizations</h1>
-          <p className="text-sm text-slate-500">Manage tenant accounts, quotas, and licensing.</p>
-        </div>
-        <Button variant="primary" icon={Plus}>New Organization</Button>
-      </div>
+      <PageHeader
+        eyebrow="Platform Administration"
+        title="Institutions"
+        description="Register institutions, maintain their contact details and control access."
+        actions={<Button icon={Plus} onClick={() => setEditing(EMPTY)}>Add institution</Button>}
+      />
 
-      <Card>
-        <div className="flex items-center gap-3 mb-4">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-            <input
-              type="text"
-              placeholder="Filter by organization name or domain..."
-              className="w-full text-xs border border-slate-200 rounded-lg pl-9 pr-3 py-2 bg-slate-50 focus:bg-white focus:outline-none"
-            />
-          </div>
+      <Card bodyClassName="p-0">
+        <div className="border-b border-slate-200 p-4">
+          <InputField aria-label="Search institutions" placeholder="Search by name, code, city or domain" prefixIcon={Search} value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-md" />
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {tenants.map((t, idx) => (
-            <div key={idx} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white hover:shadow-sm transition">
-              <div className="flex items-start justify-between">
-                <div className="p-2.5 rounded-lg bg-purple-100 text-purple-700">
-                  <Building className="w-5 h-5" />
-                </div>
-                <Badge variant="purple">{t.plan}</Badge>
-              </div>
-              <h4 className="mt-3 font-semibold text-slate-800 text-sm">{t.name}</h4>
-              <p className="text-xs text-slate-500 font-mono mt-0.5">{t.domain}</p>
-              <div className="mt-4 pt-3 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-400">
-                <span>Created {t.created}</span>
-                <span className="text-blue-600 font-medium cursor-pointer hover:underline">Manage &rarr;</span>
-              </div>
-            </div>
-          ))}
-        </div>
+        {shown.length === 0 ? (
+          <EmptyState icon={Building2} title="No institutions found" description="Try another search, or register a new institution." />
+        ) : (
+          <Table className="rounded-none border-0">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Institution</TableHead>
+                <TableHead>Code</TableHead>
+                <TableHead className="hidden md:table-cell">Contact</TableHead>
+                <TableHead align="center" className="hidden sm:table-cell">Admins</TableHead>
+                <TableHead className="hidden lg:table-cell">Registered</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {shown.map((i) => (
+                <TableRow key={i.id}>
+                  <TableCell><p className="font-medium text-slate-900">{i.name}</p><p className="text-[11px] text-slate-500">{i.city}</p></TableCell>
+                  <TableCell className="font-mono font-semibold text-[#1E3A5F]">{i.code}</TableCell>
+                  <TableCell className="hidden md:table-cell">{i.contactEmail || '—'}<span className="block text-[11px] text-slate-500">{i.domain}</span></TableCell>
+                  <TableCell align="center" className="hidden tabular-nums sm:table-cell">{users.filter((u) => u.institutionId === i.id).length}</TableCell>
+                  <TableCell className="hidden lg:table-cell">{formatDate(i.createdAt)}</TableCell>
+                  <TableCell><StatusBadge status={i.status} size="sm" /></TableCell>
+                  <TableCell align="right">
+                    <div className="flex justify-end gap-1">
+                      <button type="button" aria-label={`Edit ${i.name}`} onClick={() => setEditing({ ...i })} className="rounded-sm p-2 text-slate-500 hover:bg-slate-100 hover:text-[#1E3A5F]"><Edit3 className="h-4 w-4" /></button>
+                      <Button size="sm" variant="ghost" onClick={() => setStatusTarget(i)}>{i.status === 'Active' ? 'Suspend' : 'Reactivate'}</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
       </Card>
+
+      <Modal
+        isOpen={Boolean(editing)}
+        onClose={close}
+        title={editing?.id ? `Edit ${editing.name}` : 'Register institution'}
+        maxWidth="max-w-2xl"
+        footer={(
+          <>
+            <Button variant="secondary" onClick={close}>Cancel</Button>
+            <Button type="submit" form="institution-form">{editing?.id ? 'Save changes' : 'Register institution'}</Button>
+          </>
+        )}
+      >
+        {editing && (
+          <form id="institution-form" onSubmit={save} className="grid gap-4 sm:grid-cols-2" noValidate>
+            <InputField className="sm:col-span-2" label="Institution name" required value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} error={errors.name} />
+            <InputField label="Institution code" required value={editing.code} onChange={(e) => setEditing({ ...editing, code: e.target.value.toUpperCase() })} error={errors.code} helperText="e.g. 1DA (VTU college code)" inputClassName="font-mono uppercase" />
+            <InputField label="City" value={editing.city} onChange={(e) => setEditing({ ...editing, city: e.target.value })} />
+            <InputField label="Email domain" value={editing.domain} onChange={(e) => setEditing({ ...editing, domain: e.target.value })} error={errors.domain} placeholder="college.edu.in" />
+            <InputField label="Examination office email" type="email" value={editing.contactEmail} onChange={(e) => setEditing({ ...editing, contactEmail: e.target.value })} error={errors.contactEmail} />
+          </form>
+        )}
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={Boolean(statusTarget)}
+        onClose={() => setStatusTarget(null)}
+        onConfirm={toggleStatus}
+        tone={statusTarget?.status === 'Active' ? 'danger' : 'primary'}
+        title={statusTarget?.status === 'Active' ? `Suspend ${statusTarget?.name}?` : `Reactivate ${statusTarget?.name}?`}
+        confirmLabel={statusTarget?.status === 'Active' ? 'Suspend institution' : 'Reactivate'}
+        description={statusTarget?.status === 'Active'
+          ? 'Administrators of this institution will lose access until it is reactivated. Examination records are kept.'
+          : 'Administrators of this institution regain access immediately.'}
+      />
     </div>
   );
 }

@@ -4,13 +4,13 @@ import { ArrowLeft, Mail, ShieldAlert, CheckCircle2, HelpCircle, Layers, Graduat
 import InputField from '../../components/common/InputField';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
-import Badge from '../../components/common/Badge';
 import { authService } from '../../services/authService';
 import { USER_ROLES } from '../../utils/constants';
 
 export default function ForgotPasswordPage() {
   const [searchParams] = useSearchParams();
-  const initialRole = searchParams.get('role') || USER_ROLES.STUDENT;
+  const roleParam = searchParams.get('role');
+  const initialRole = Object.values(USER_ROLES).includes(roleParam) ? roleParam : USER_ROLES.STUDENT;
 
   const [role, setRole] = useState(initialRole);
   const [identifier, setIdentifier] = useState('');

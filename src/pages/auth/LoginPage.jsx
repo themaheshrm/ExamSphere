@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import SuperAdminLoginForm from './SuperAdminLoginForm';
 import AdminLoginForm from './AdminLoginForm';
 import StudentLoginForm from './StudentLoginForm';
 import { USER_ROLES } from '../../utils/constants';
 import { useAuth } from '../../context/AuthContext';
+
+const COPYRIGHT_YEAR = new Date().getFullYear();
 
 export default function LoginPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -23,20 +25,12 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, role, navigate]);
 
-  // Read active role from URL parameter or default to Student
-  const initialRole = searchParams.get('role') || USER_ROLES.STUDENT;
-  const [activeRole, setActiveRole] = useState(initialRole);
-
-  useEffect(() => {
-    const roleParam = searchParams.get('role');
-    if (roleParam && Object.values(USER_ROLES).includes(roleParam)) {
-      setActiveRole(roleParam);
-    }
-  }, [searchParams]);
+  // Active portal tab is derived from the URL (unknown values fall back to Student)
+  const roleParam = searchParams.get('role');
+  const activeRole = Object.values(USER_ROLES).includes(roleParam) ? roleParam : USER_ROLES.STUDENT;
 
   const handleRoleChange = (newRole) => {
     clearError();
-    setActiveRole(newRole);
     setSearchParams({ role: newRole });
   };
 
@@ -49,7 +43,7 @@ export default function LoginPage() {
       {/* ── Top Institutional Sub-Bar ─────────────────────────────────────── */}
       <div className="w-full bg-slate-100 border-b border-slate-200 text-[11px] text-slate-600 px-4 py-1.5">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-1">
-          <div className="truncate text-center sm:text-left">
+          <div className="w-full min-w-0 truncate text-center sm:w-auto sm:text-left">
             Dr. Ambedkar Institute of Technology &bull; An Autonomous Institution Affiliated to VTU, Belagavi
           </div>
           <div className="flex items-center gap-3 font-medium text-slate-700">
@@ -252,7 +246,7 @@ export default function LoginPage() {
 
           <div className="flex flex-col sm:flex-row items-center justify-between gap-1 text-[11px] text-slate-500 pt-1 text-center sm:text-left">
             <p>
-              &copy; {new Date().getFullYear()} Dr. Ambedkar Institute of Technology. All Rights Reserved.
+              &copy; {COPYRIGHT_YEAR} Dr. Ambedkar Institute of Technology. All Rights Reserved.
             </p>
             <p>
               Authorized access only. Unauthorized usage is punishable under the Indian Information Technology Act.
