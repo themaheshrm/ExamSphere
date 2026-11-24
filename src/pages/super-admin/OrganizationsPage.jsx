@@ -80,23 +80,23 @@ export default function OrganizationsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Institution</TableHead>
-                <TableHead>Code</TableHead>
+                <TableHead className="hidden sm:table-cell">Code</TableHead>
                 <TableHead className="hidden md:table-cell">Contact</TableHead>
                 <TableHead align="center" className="hidden sm:table-cell">Admins</TableHead>
                 <TableHead className="hidden lg:table-cell">Registered</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead className="hidden sm:table-cell">Status</TableHead>
                 <TableHead align="right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {shown.map((i) => (
                 <TableRow key={i.id}>
-                  <TableCell><p className="font-medium text-slate-900">{i.name}</p><p className="text-[11px] text-slate-500">{i.city}</p></TableCell>
-                  <TableCell className="font-mono font-semibold text-[#1E3A5F]">{i.code}</TableCell>
+                  <TableCell><p className="font-medium text-slate-900">{i.name}</p><p className="text-[11px] text-slate-500">{i.city}</p><p className="mt-1 flex items-center gap-2 sm:hidden"><span className="font-mono text-[11px] font-semibold text-[#1E3A5F]">{i.code}</span><StatusBadge status={i.status} size="sm" /></p></TableCell>
+                  <TableCell className="hidden font-mono font-semibold text-[#1E3A5F] sm:table-cell">{i.code}</TableCell>
                   <TableCell className="hidden md:table-cell">{i.contactEmail || '—'}<span className="block text-[11px] text-slate-500">{i.domain}</span></TableCell>
                   <TableCell align="center" className="hidden tabular-nums sm:table-cell">{users.filter((u) => u.institutionId === i.id).length}</TableCell>
                   <TableCell className="hidden lg:table-cell">{formatDate(i.createdAt)}</TableCell>
-                  <TableCell><StatusBadge status={i.status} size="sm" /></TableCell>
+                  <TableCell className="hidden sm:table-cell"><StatusBadge status={i.status} size="sm" /></TableCell>
                   <TableCell align="right">
                     <div className="flex justify-end gap-1">
                       <button type="button" aria-label={`Edit ${i.name}`} onClick={() => setEditing({ ...i })} className="rounded-sm p-2 text-slate-500 hover:bg-slate-100 hover:text-[#1E3A5F]"><Edit3 className="h-4 w-4" /></button>

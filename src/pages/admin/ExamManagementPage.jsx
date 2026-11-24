@@ -158,7 +158,7 @@ export default function ExamManagementPage() {
         )}
       />
 
-      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 lg:grid-cols-5" aria-label="Examination status">
+      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 max-lg:[&>*:last-child]:col-span-2 lg:grid-cols-5" aria-label="Examination status">
         {[
           ['Status', examState.isPublished ? 'Published' : 'Draft', examState.isPublished ? `Since ${formatDateTime(examState.publishedAt)}` : 'Hidden from candidates'],
           ['Patterns', `${Object.keys(examState.patterns).length} × 25`, verification?.isValid ? 'Integrity verified' : 'Verification failed'],

@@ -178,9 +178,9 @@ export default function StudentsPage() {
                   <TableHead className="w-10"><input type="checkbox" aria-label="Select all on this page" checked={allOnPage} onChange={toggleAll} className="h-4 w-4 accent-[#1E3A5F]" /></TableHead>
                   <TableHead>Candidate</TableHead>
                   <TableHead className="hidden md:table-cell">Sem / Sec</TableHead>
-                  <TableHead>Eligibility</TableHead>
+                  <TableHead className="hidden sm:table-cell">Eligibility</TableHead>
                   <TableHead className="hidden sm:table-cell">Pattern</TableHead>
-                  <TableHead>Attempt</TableHead>
+                  <TableHead className="hidden sm:table-cell">Attempt</TableHead>
                   <TableHead align="right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -194,14 +194,15 @@ export default function StudentsPage() {
                         <p className="font-mono text-xs font-semibold text-[#1E3A5F]">{s.usn}</p>
                         <p className="font-medium text-slate-900">{s.name}</p>
                         <p className="text-[11px] text-slate-500">{s.email}</p>
+                        <p className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 sm:hidden"><StatusBadge status={s.status} size="sm" /><span>{attempt?.status === 'submitted' ? `${attempt.result?.score}/${attempt.result?.maxScore}` : attempt ? 'In progress' : 'Not started'}</span></p>
                       </TableCell>
                       <TableCell className="hidden md:table-cell">{s.semester} / {s.section}</TableCell>
-                      <TableCell>
+                      <TableCell className="hidden sm:table-cell">
                         <StatusBadge status={s.status} size="sm" />
                         {s.remarks && <p className="mt-1 max-w-48 text-[11px] text-slate-500">{s.remarks}</p>}
                       </TableCell>
                       <TableCell className="hidden font-mono sm:table-cell">{assignPatternToStudent(s.usn)}</TableCell>
-                      <TableCell>
+                      <TableCell className="hidden sm:table-cell">
                         {!attempt && <span className="text-[11px] text-slate-400">Not started</span>}
                         {attempt?.status === 'active' && <StatusBadge status="In progress" size="sm" />}
                         {attempt?.status === 'submitted' && (

@@ -14,6 +14,7 @@ import { formatDateTime } from '../../utils/format';
 import Modal from '../../components/common/Modal';
 import Button from '../../components/common/Button';
 import Alert from '../../components/common/Alert';
+import { InstitutionMark } from '../../components/public/PublicChrome';
 
 // ── Question states (unchanged values: they are persisted in sessionStorage) ──
 const Q_STATUS = {
@@ -362,7 +363,7 @@ export default function ExamInterface() {
     <header className="border-b border-[#152A45] bg-[#1E3A5F] text-white">
       <div className="flex h-14 items-center justify-between gap-3 px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-white font-serif text-[10px] font-bold text-[#1E3A5F] sm:flex">AIT</span>
+          <span className="hidden sm:block"><InstitutionMark size="sm" inverted /></span>
           <div className="min-w-0 leading-tight">
             <p className="truncate text-sm font-semibold">{studentExam.courseCode} · {studentExam.courseTitle}</p>
             <p className="hidden truncate text-[11px] text-slate-300 sm:block">{INSTITUTION.name} · {studentExam.semester}</p>

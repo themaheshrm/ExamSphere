@@ -4,13 +4,13 @@ import { LogOut, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { INSTITUTION, NAVIGATION_CONFIG, ROLE_LABELS, USER_ROLES } from '../../utils/constants';
 import { studentInfo } from '../../data/studentMockData';
+import { getRouteForRole } from '../../services/authService';
+import { InstitutionMark } from '../public/PublicChrome';
 
-function Brand() {
+function Brand({ to }) {
   return (
-    <Link to="/" className="flex items-center gap-3" aria-label="ExamSphere home">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-[#1E3A5F] font-serif text-[11px] font-bold tracking-tight text-white">
-        AIT
-      </span>
+    <Link to={to} className="flex items-center gap-3" aria-label="ExamSphere — my dashboard">
+      <InstitutionMark size="sm" />
       <span className="min-w-0 leading-tight">
         <span className="block text-sm font-semibold text-slate-900">ExamSphere</span>
         <span className="block truncate text-[10px] font-medium uppercase tracking-wider text-slate-500">{INSTITUTION.shortName} · CBT Portal</span>
@@ -59,7 +59,7 @@ export default function Sidebar({ isOpen, onClose }) {
         }`}
       >
         <div className="flex h-14 items-center justify-between border-b border-slate-200 px-4">
-          <Brand />
+          <Brand to={navRole === USER_ROLES.STUDENT ? '/student' : getRouteForRole(role)} />
           <button type="button" onClick={onClose} className="rounded-sm p-1.5 text-slate-500 hover:bg-slate-100 lg:hidden" aria-label="Close navigation">
             <X className="h-4 w-4" />
           </button>

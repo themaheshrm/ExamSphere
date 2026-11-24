@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import InputField from '../../components/common/InputField';
+import Button from '../../components/common/Button';
+import Alert from '../../components/common/Alert';
 import { useAuth } from '../../context/AuthContext';
 import { USER_ROLES } from '../../utils/constants';
 
@@ -57,12 +59,7 @@ export default function AdminLoginForm({ onForgotPassword }) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
       {/* Formal Error Alert */}
-      {error && (
-        <div className="p-3 border border-red-300 bg-red-50 text-red-800 text-xs rounded-xs">
-          <p className="font-semibold">Authentication Error:</p>
-          <p className="mt-0.5 text-[11px] leading-relaxed">{error}</p>
-        </div>
-      )}
+      {error && <Alert tone="danger" title="Authentication Error">{error}</Alert>}
 
       {/* Staff ID / Email Input */}
       <InputField
@@ -113,7 +110,7 @@ export default function AdminLoginForm({ onForgotPassword }) {
             type="checkbox"
             checked={formData.remember}
             onChange={(e) => setFormData({ ...formData, remember: e.target.checked })}
-            className="rounded-xs border-slate-300 text-[#1E3A5F] focus:ring-0 h-3.5 w-3.5"
+            className="h-3.5 w-3.5 accent-[#1E3A5F]"
             disabled={isLoading}
           />
           <span>Remember workstation</span>
@@ -130,13 +127,9 @@ export default function AdminLoginForm({ onForgotPassword }) {
 
       {/* Simple Rectangular Navy Button */}
       <div className="pt-2">
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="w-full bg-[#1E3A5F] hover:bg-[#152A45] active:bg-[#0F1D30] text-white text-xs sm:text-sm font-semibold py-2 px-4 rounded-xs transition-colors disabled:opacity-60 cursor-pointer shadow-xs"
-        >
+        <Button type="submit" size="lg" className="w-full" isLoading={isLoading}>
           {isLoading ? 'Authenticating Staff...' : 'Sign In as Administrator'}
-        </button>
+        </Button>
       </div>
 
       <p className="text-[11px] text-slate-500 text-center pt-1">

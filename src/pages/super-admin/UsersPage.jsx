@@ -93,10 +93,10 @@ export default function UsersPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>User</TableHead>
-                  <TableHead>Role</TableHead>
+                  <TableHead className="hidden sm:table-cell">Role</TableHead>
                   <TableHead className="hidden md:table-cell">Institution</TableHead>
                   <TableHead className="hidden lg:table-cell">Created</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead className="hidden sm:table-cell">Status</TableHead>
                   <TableHead align="right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -106,11 +106,12 @@ export default function UsersPage() {
                     <TableCell>
                       <p className="font-medium text-slate-900">{u.name}{isSelf(u) && <span className="ml-1 text-[11px] text-slate-500">(you)</span>}</p>
                       <p className="text-[11px] text-slate-500">{u.email}{u.staffId ? ` · ${u.staffId}` : ''}</p>
+                      <p className="mt-1 flex items-center gap-2 sm:hidden"><Badge size="sm" variant={u.role === 'super-admin' ? 'primary' : 'neutral'}>{u.role === 'super-admin' ? 'Super admin' : 'Institution admin'}</Badge><StatusBadge status={u.status} size="sm" /></p>
                     </TableCell>
-                    <TableCell><Badge size="sm" variant={u.role === 'super-admin' ? 'primary' : 'neutral'}>{u.role === 'super-admin' ? 'Super admin' : 'Institution admin'}</Badge></TableCell>
+                    <TableCell className="hidden sm:table-cell"><Badge size="sm" variant={u.role === 'super-admin' ? 'primary' : 'neutral'}>{u.role === 'super-admin' ? 'Super admin' : 'Institution admin'}</Badge></TableCell>
                     <TableCell className="hidden md:table-cell">{u.institutionId ? instName[u.institutionId] || '—' : 'All institutions'}</TableCell>
                     <TableCell className="hidden lg:table-cell">{formatDate(u.createdAt)}</TableCell>
-                    <TableCell><StatusBadge status={u.status} size="sm" /></TableCell>
+                    <TableCell className="hidden sm:table-cell"><StatusBadge status={u.status} size="sm" /></TableCell>
                     <TableCell align="right">
                       <div className="flex justify-end gap-1">
                         <button type="button" aria-label={`Edit ${u.name}`} onClick={() => { setEditing({ ...u, institutionId: u.institutionId || '', staffId: u.staffId || '' }); setErrors({}); }} className="rounded-sm p-2 text-slate-500 hover:bg-slate-100 hover:text-[#1E3A5F]"><Edit3 className="h-4 w-4" /></button>

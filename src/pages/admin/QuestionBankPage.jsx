@@ -239,7 +239,7 @@ export default function QuestionBankPage() {
         )}
       />
 
-      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 lg:grid-cols-5" aria-label="Question bank summary">
+      <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 max-lg:[&>*:last-child]:col-span-2 lg:grid-cols-5" aria-label="Question bank summary">
         <div className="bg-white p-4">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Total questions</p>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{questions.length}</p>
@@ -301,10 +301,10 @@ export default function QuestionBankPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-12"><span className="sr-only">Select</span></TableHead>
-                  <TableHead className="w-14">ID</TableHead>
+                  <TableHead className="hidden w-14 sm:table-cell">ID</TableHead>
                   <TableHead>Question</TableHead>
                   <TableHead className="hidden md:table-cell">Subject / topic</TableHead>
-                  <TableHead>Difficulty</TableHead>
+                  <TableHead className="hidden sm:table-cell">Difficulty</TableHead>
                   <TableHead align="center" className="hidden sm:table-cell">Marks</TableHead>
                   <TableHead align="right">Actions</TableHead>
                 </TableRow>
@@ -323,9 +323,10 @@ export default function QuestionBankPage() {
                           className="h-4 w-4 rounded-sm border-slate-300 accent-[#1E3A5F]"
                         />
                       </TableCell>
-                      <TableCell className="font-mono text-slate-500">{question.id}</TableCell>
+                      <TableCell className="hidden font-mono text-slate-500 sm:table-cell">{question.id}</TableCell>
                       <TableCell className="max-w-xl">
                         <p className="text-[13px] font-medium leading-snug text-slate-900">{question.statement}</p>
+                        <p className="mt-1 flex items-center gap-2 text-[11px] text-slate-500 sm:hidden"><span className="font-mono">ID {question.id}</span><StatusBadge status={question.difficulty} dot={false} size="sm" /><span>{question.marks} marks</span></p>
                         <ol className="mt-1.5 grid gap-x-4 gap-y-0.5 text-[11px] text-slate-500 sm:grid-cols-2">
                           {question.options.map((option, index) => (
                             <li key={index} className="truncate">
@@ -338,7 +339,7 @@ export default function QuestionBankPage() {
                         <p className="text-slate-800">{question.subject}</p>
                         <p className="text-[11px] text-slate-500">{question.topic}</p>
                       </TableCell>
-                      <TableCell><StatusBadge status={question.difficulty} dot={false} /></TableCell>
+                      <TableCell className="hidden sm:table-cell"><StatusBadge status={question.difficulty} dot={false} /></TableCell>
                       <TableCell align="center" className="hidden tabular-nums sm:table-cell">
                         {question.marks}{Number(question.negativeMarks) > 0 && <span className="text-rose-700"> / −{question.negativeMarks}</span>}
                       </TableCell>
