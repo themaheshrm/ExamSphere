@@ -2,8 +2,8 @@ import React, { forwardRef } from 'react';
 import { AlertCircle } from 'lucide-react';
 
 /**
- * Enterprise Form Input Field
- * Features label, helper caption, validation error styling, prefix icon, and interactive/static suffix slots.
+ * Institutional Form Input Field
+ * Clean rectangular input with subtle borders and clear focus states.
  */
 const InputField = forwardRef(function InputField(
   {
@@ -35,16 +35,16 @@ const InputField = forwardRef(function InputField(
       {label && (
         <label
           htmlFor={inputId}
-          className="block text-xs font-semibold text-slate-700 mb-1.5"
+          className="block text-xs font-medium text-slate-800 mb-1 select-none"
         >
           {label}
-          {required && <span className="text-rose-500 ml-1">*</span>}
+          {required && <span className="text-red-600 ml-0.5">*</span>}
         </label>
       )}
 
-      <div className="relative rounded">
+      <div className="relative">
         {PrefixIcon && (
-          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-2.5 text-slate-400">
             <PrefixIcon className="h-4 w-4" />
           </div>
         )}
@@ -60,33 +60,33 @@ const InputField = forwardRef(function InputField(
           placeholder={placeholder}
           disabled={disabled}
           required={required}
-          className={`w-full rounded border bg-white py-2 text-xs text-slate-900 transition-colors placeholder:text-slate-400 focus:outline-none focus:ring-1 disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed ${
-            PrefixIcon ? 'pl-9' : 'pl-3'
-          } ${suffixButton || SuffixIcon || error ? 'pr-10' : 'pr-3'} ${
+          className={`w-full h-9 rounded-sm border bg-white text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed ${
+            PrefixIcon ? 'pl-8.5' : 'pl-3'
+          } ${suffixButton || SuffixIcon || error ? 'pr-8.5' : 'pr-3'} ${
             error
-              ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/30'
-              : 'border-slate-300 focus:border-[#1E3A5F] focus:ring-[#1E3A5F]'
+              ? 'border-red-500 focus:border-red-600 focus:ring-1 focus:ring-red-600'
+              : 'border-slate-300 focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]'
           } ${inputClassName}`}
           {...props}
         />
 
         {error ? (
-          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-rose-500">
+          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2.5 text-red-600">
             <AlertCircle className="h-4 w-4" />
           </div>
         ) : suffixButton ? (
-          <div className="absolute inset-y-0 right-0 flex items-center pr-2.5">
+          <div className="absolute inset-y-0 right-0 flex items-center pr-1.5">
             {suffixButton}
           </div>
         ) : SuffixIcon ? (
-          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400">
+          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-400">
             <SuffixIcon className="h-4 w-4" />
           </div>
         ) : null}
       </div>
 
       {error ? (
-        <p className="mt-1 text-[11px] text-rose-600 font-medium">{error}</p>
+        <p className="mt-1 text-xs text-red-600">{error}</p>
       ) : helperText ? (
         <p className="mt-1 text-[11px] text-slate-500">{helperText}</p>
       ) : null}

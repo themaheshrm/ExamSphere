@@ -108,19 +108,28 @@ export default function AdminDashboard() {
 
         {/* Quick Actions & Live Test Alert */}
         <div className="space-y-6">
-          <Card className="bg-gradient-to-br from-blue-600 to-indigo-700 text-white border-0">
+          <Card className="bg-[#1E3A5F] text-white border-0">
             <div className="flex items-start gap-3">
-              <div className="p-2 bg-white/10 rounded-lg shrink-0">
-                <AlertCircle className="w-5 h-5 text-white" />
+              <div className="p-2 bg-white/10 rounded-xs shrink-0">
+                <FileSpreadsheet className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h4 className="font-bold text-sm">Live CBT Session Active</h4>
-                <p className="text-xs text-blue-100 mt-1">
-                  CS301 Algorithm Assessment is currently ongoing with 218 active examinees online.
+                <div className="flex items-center gap-2">
+                  <h4 className="font-bold text-sm">Question Paper Generator</h4>
+                  <span className="text-[10px] bg-emerald-500 text-white font-mono font-bold px-1.5 py-0.2 rounded-xs">
+                    10 PATTERNS
+                  </span>
+                </div>
+                <p className="text-xs text-slate-200 mt-1 leading-relaxed">
+                  Generate 10 unique question-paper patterns (A–J) with randomized question sequences and option mappings.
                 </p>
-                <button className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold bg-white text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition">
-                  Open Proctor Monitor &rarr;
-                </button>
+                <Link
+                  to="/admin/exams"
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold bg-white text-[#1E3A5F] px-3 py-1.5 rounded-xs hover:bg-slate-100 transition shadow-xs cursor-pointer"
+                >
+                  <span>Open Randomizer Console</span>
+                  <span>&rarr;</span>
+                </Link>
               </div>
             </div>
           </Card>
@@ -128,17 +137,17 @@ export default function AdminDashboard() {
           <Card title="Quick Management Links">
             <div className="grid grid-cols-1 gap-2 text-xs">
               <Link
-                to="/admin/questions"
-                className="p-3 rounded-lg border border-slate-100 bg-slate-50 hover:bg-slate-100 flex items-center justify-between transition font-medium text-slate-700"
+                to="/admin/exams"
+                className="p-3 rounded-xs border border-slate-200 bg-slate-50 hover:bg-slate-100 flex items-center justify-between transition font-medium text-slate-800"
               >
-                <span>Import Question Bank (.CSV / JSON)</span>
+                <span>Question & Option Randomizer (Patterns A–J)</span>
                 <span>&rarr;</span>
               </Link>
               <Link
-                to="/admin/students"
-                className="p-3 rounded-lg border border-slate-100 bg-slate-50 hover:bg-slate-100 flex items-center justify-between transition font-medium text-slate-700"
+                to="/admin/questions"
+                className="p-3 rounded-xs border border-slate-200 bg-slate-50 hover:bg-slate-100 flex items-center justify-between transition font-medium text-slate-800"
               >
-                <span>Bulk Allocate Student Hall Tickets</span>
+                <span>Taxonomy & Question Repositories</span>
                 <span>&rarr;</span>
               </Link>
             </div>

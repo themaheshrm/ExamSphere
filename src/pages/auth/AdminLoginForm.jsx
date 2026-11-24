@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserCheck, Lock, Eye, EyeOff, Building, AlertCircle } from 'lucide-react';
 import InputField from '../../components/common/InputField';
-import Button from '../../components/common/Button';
 import { useAuth } from '../../context/AuthContext';
 import { USER_ROLES } from '../../utils/constants';
 
@@ -24,13 +22,13 @@ export default function AdminLoginForm({ onForgotPassword }) {
     const val = formData.identifier.trim();
 
     if (!val) {
-      errors.identifier = 'Institution Admin ID or Email is required';
+      errors.identifier = 'Staff ID or Official Email is required';
     } else if (val.length < 3) {
-      errors.identifier = 'Enter a valid staff ID or official email';
+      errors.identifier = 'Enter a valid staff ID or email address';
     }
 
     if (!formData.password) {
-      errors.password = 'Portal password is required';
+      errors.password = 'Password is required';
     } else if (formData.password.length < 5) {
       errors.password = 'Password must be at least 5 characters';
     }
@@ -58,20 +56,17 @@ export default function AdminLoginForm({ onForgotPassword }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-      {/* Error Banner */}
+      {/* Formal Error Alert */}
       {error && (
-        <div className="flex items-start gap-2.5 p-3 rounded border border-rose-200 bg-rose-50 text-rose-800 text-xs">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
-          <div className="flex-1">
-            <p className="font-semibold">Staff Authentication Error</p>
-            <p className="mt-0.5 text-[11px] leading-relaxed">{error}</p>
-          </div>
+        <div className="p-3 border border-red-300 bg-red-50 text-red-800 text-xs rounded-xs">
+          <p className="font-semibold">Authentication Error:</p>
+          <p className="mt-0.5 text-[11px] leading-relaxed">{error}</p>
         </div>
       )}
 
-      {/* Admin ID / Email */}
+      {/* Staff ID / Email Input */}
       <InputField
-        label="Admin Staff ID or Official Email"
+        label="Staff ID or Official University Email"
         type="text"
         placeholder="e.g. admin@drait.edu.in"
         value={formData.identifier}
@@ -79,33 +74,31 @@ export default function AdminLoginForm({ onForgotPassword }) {
           setFormData({ ...formData, identifier: e.target.value });
           if (formErrors.identifier) setFormErrors({ ...formErrors, identifier: null });
         }}
-        prefixIcon={UserCheck}
         error={formErrors.identifier}
-        helperText="Allocated by your university examination board"
+        helperText="Allocated by university examination board"
         disabled={isLoading}
         required
       />
 
-      {/* Password with Show/Hide Toggle */}
+      {/* Password with Clean Show/Hide Control */}
       <InputField
-        label="Staff Password"
+        label="Staff Portal Password"
         type={showPassword ? 'text' : 'password'}
-        placeholder="••••••••••••"
+        placeholder="Enter password"
         value={formData.password}
         onChange={(e) => {
           setFormData({ ...formData, password: e.target.value });
           if (formErrors.password) setFormErrors({ ...formErrors, password: null });
         }}
-        prefixIcon={Lock}
         suffixButton={
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
-            className="text-slate-400 hover:text-slate-600 p-1 focus:outline-none"
+            className="text-[11px] text-slate-500 hover:text-slate-900 font-medium px-1.5 py-0.5 focus:outline-none cursor-pointer"
             aria-label={showPassword ? 'Hide password' : 'Show password'}
             tabIndex={-1}
           >
-            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            {showPassword ? 'Hide' : 'Show'}
           </button>
         }
         error={formErrors.password}
@@ -113,44 +106,41 @@ export default function AdminLoginForm({ onForgotPassword }) {
         required
       />
 
-      {/* Helper Row: Remember & Forgot Password */}
+      {/* Utility Row: Remember & Reset Credentials */}
       <div className="flex items-center justify-between text-xs pt-1">
-        <label className="flex items-center gap-2 cursor-pointer select-none text-slate-600">
+        <label className="flex items-center gap-1.5 cursor-pointer text-slate-700 select-none">
           <input
             type="checkbox"
             checked={formData.remember}
             onChange={(e) => setFormData({ ...formData, remember: e.target.checked })}
-            className="rounded border-slate-300 text-[#1E3A5F] focus:ring-[#1E3A5F] h-3.5 w-3.5"
+            className="rounded-xs border-slate-300 text-[#1E3A5F] focus:ring-0 h-3.5 w-3.5"
             disabled={isLoading}
           />
-          <span>Remember staff workstation</span>
+          <span>Remember workstation</span>
         </label>
 
         <button
           type="button"
           onClick={() => onForgotPassword?.(USER_ROLES.ADMIN)}
-          className="text-xs font-semibold text-[#1E3A5F] hover:underline"
+          className="text-xs text-[#1E3A5F] hover:underline cursor-pointer"
         >
-          Reset credentials
+          Reset Password
         </button>
       </div>
 
-      {/* Submit Button */}
+      {/* Simple Rectangular Navy Button */}
       <div className="pt-2">
-        <Button
+        <button
           type="submit"
-          variant="primary"
-          size="lg"
-          className="w-full"
-          isLoading={isLoading}
-          icon={Building}
+          disabled={isLoading}
+          className="w-full bg-[#1E3A5F] hover:bg-[#152A45] active:bg-[#0F1D30] text-white text-xs sm:text-sm font-semibold py-2 px-4 rounded-xs transition-colors disabled:opacity-60 cursor-pointer shadow-xs"
         >
-          Sign In to Examination Center
-        </Button>
+          {isLoading ? 'Authenticating Staff...' : 'Sign In as Administrator'}
+        </button>
       </div>
 
-      <p className="text-[11px] text-slate-400 text-center pt-1">
-        Restricted to authorized Controller of Examinations (COE) and invigilation staff.
+      <p className="text-[11px] text-slate-500 text-center pt-1">
+        Restricted to Controller of Examinations (COE) & authorized invigilation staff
       </p>
     </form>
   );

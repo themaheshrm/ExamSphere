@@ -12,6 +12,7 @@ import SuperAdminDashboard from '../pages/super-admin/SuperAdminDashboard';
 import OrganizationsPage from '../pages/super-admin/OrganizationsPage';
 import SystemSettingsPage from '../pages/super-admin/SystemSettingsPage';
 import StudentDashboard from '../pages/student/StudentDashboard';
+import ExamInterface from '../pages/student/ExamInterface';
 import { USER_ROLES } from '../utils/constants';
 
 export default function AppRoutes() {
@@ -21,6 +22,17 @@ export default function AppRoutes() {
         {/* Public Authentication Routes */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+
+        {/* Full-screen Exam Interface — outside DashboardLayout */}
+        <Route
+          element={
+            <ProtectedRoute
+              allowedRoles={[USER_ROLES.STUDENT, USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN]}
+            />
+          }
+        >
+          <Route path="/student/exam" element={<ExamInterface />} />
+        </Route>
 
         {/* Main Application Shell */}
         <Route element={<DashboardLayout />}>
