@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import DashboardLayout from '../layouts/DashboardLayout';
 import ProtectedRoute from './ProtectedRoute';
 import LoginPage from '../pages/auth/LoginPage';
+import HomePage from '../pages/public/HomePage';
 const ForgotPasswordPage = lazy(() => import('../pages/auth/ForgotPasswordPage'));
 const ComponentShowcase = lazy(() => import('../pages/design-system/ComponentShowcase'));
 const AdminDashboard = lazy(() => import('../pages/admin/AdminDashboard'));
@@ -37,6 +38,9 @@ export default function AppRoutes() {
     <BrowserRouter>
       <Suspense fallback={<PageFallback />}>
       <Routes>
+        {/* Public home page */}
+        <Route path="/" element={<HomePage />} />
+
         {/* Public Authentication Routes */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
@@ -54,8 +58,6 @@ export default function AppRoutes() {
 
         {/* Main Application Shell */}
         <Route element={<DashboardLayout />}>
-          {/* Default entry point redirects to login */}
-          <Route index element={<Navigate to="/login" replace />} />
 
           {/* Design System Specification & Showcase (Public for UI verification) */}
           <Route path="design-system" element={<ComponentShowcase />} />
