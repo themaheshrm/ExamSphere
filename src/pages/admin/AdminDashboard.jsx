@@ -10,8 +10,9 @@ import StatCard from '../../components/common/StatCard';
 import StatusBadge from '../../components/common/StatusBadge';
 import EmptyState from '../../components/common/EmptyState';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
-import { examRandomizerService } from '../../services/examRandomizerService';
-import { questionBankService } from '../../services/questionBankService';
+import { scopedQuestionBank } from '../../services/scopedQuestionBank';
+import { useAdminExamContext } from '../../utils/useAdminExamContext';
+import { ExamSwitcher, ExamNotCreated, ScopeDenied } from '../../components/admin/ExamScope';
 import { studentRosterService } from '../../services/studentRosterService';
 import { activityLogService } from '../../services/activityLogService';
 import { useDataVersion } from '../../utils/useDataVersion';
@@ -32,16 +33,17 @@ function Step({ done, label, detail, to }) {
   );
 }
 
-export default function AdminDashboard() {
+function DashboardView({ service, examCode, summaries, selectExam, scope }) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const q = `?exam=${examCode}`;
   useDataVersion(); // re-render when exam, roster or activity data changes
 
   const data = (() => {
-    const exam = examRandomizerService.getExamState();
-    const questions = questionBankService.getQuestions();
+    const exam = service.getExamState();
+    const questions = scopedQuestionBank(scope).getQuestions();
     const roster = studentRosterService.list();
-    const attempts = examRandomizerService.listAttempts();
+    const attempts = service.listAttempts();
     const submitted = attempts.filter((a) => a.status === 'submitted' && a.result);
     const avg = submitted.length ? submitted.reduce((s, a) => s + a.result.percentage, 0) / submitted.length : null;
     return {
@@ -52,7 +54,10 @@ export default function AdminDashboard() {
       active: attempts.filter((a) => a.status === 'active').length,
       submitted,
       avg,
-      activity: activityLogService.list().slice(0, 6),
+      // Subject-scoped admins see only their own actions, never another subject's.
+      activity: activityLogService.list()
+        .filter((e) => !scope.scoped || (e.actor?.identifier && e.actor.identifier === user?.staffId))
+        .slice(0, 6),
     };
   })();
 
@@ -65,11 +70,12 @@ export default function AdminDashboard() {
       <PageHeader
         eyebrow="Examination Office"
         title="Dashboard"
-        description={`Welcome, ${(user?.name || 'Administrator').replace(/\.$/, '')}. Track the current examination, candidates and submissions.`}
+        description={`Welcome, ${(user?.name || 'Administrator').replace(/\.$/, '')}. ${scope.scoped ? `Assigned subject: ${scope.label}.` : 'Track the current examination, candidates and submissions.'}`}
         actions={(
           <>
-            <Button variant="secondary" icon={HelpCircle} onClick={() => navigate('/admin/questions')}>Question Bank</Button>
-            <Button icon={FileSpreadsheet} onClick={() => navigate('/admin/exams')}>Manage Examination</Button>
+            <ExamSwitcher summaries={summaries} value={examCode} onChange={selectExam} />
+            <Button variant="secondary" icon={HelpCircle} onClick={() => navigate(`/admin/questions${q}`)}>Question Bank</Button>
+            <Button icon={FileSpreadsheet} onClick={() => navigate(`/admin/exams${q}`)}>Manage Examination</Button>
           </>
         )}
       />
@@ -102,28 +108,28 @@ export default function AdminDashboard() {
               ))}
             </dl>
             <div className="mt-5 flex flex-wrap gap-2">
-              <Button size="sm" onClick={() => navigate('/admin/exams')} rightIcon={ArrowRight}>Open examination console</Button>
-              <Button size="sm" variant="secondary" onClick={() => navigate('/admin/results')}>View results</Button>
+              <Button size="sm" onClick={() => navigate(`/admin/exams${q}`)} rightIcon={ArrowRight}>Open examination console</Button>
+              <Button size="sm" variant="secondary" onClick={() => navigate(`/admin/results${q}`)}>View results</Button>
             </div>
           </div>
           <div className="lg:col-span-2 lg:border-l lg:border-slate-200 lg:pl-6">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Readiness checklist</p>
             <ol className="divide-y divide-slate-100">
-              <Step done={data.questions.length >= 25} label="Question bank has 25+ questions" detail={`${data.questions.length} questions available`} to="/admin/questions" />
-              <Step done={(exam.masterQuestions?.length ?? 0) === 25} label="25 questions selected" detail="Master set for this examination" to="/admin/questions" />
-              <Step done={verified} label="10 patterns generated and verified" detail="Patterns A–J with independent option order" to="/admin/exams" />
-              <Step done={data.eligible > 0} label="Candidates eligible" detail={`${data.eligible} of ${data.roster.length} on the roster`} to="/admin/students" />
-              <Step done={exam.isPublished} label="Examination published" detail={exam.isPublished ? 'Visible to candidates' : 'Hidden from candidates'} to="/admin/exams" />
+              <Step done={data.questions.length >= 25} label="Question bank has 25+ questions" detail={`${data.questions.length} questions available`} to={`/admin/questions${q}`} />
+              <Step done={(exam.masterQuestions?.length ?? 0) === 25} label="25 questions selected" detail="Master set for this examination" to={`/admin/questions${q}`} />
+              <Step done={verified} label="10 patterns generated and verified" detail="Patterns A–J with independent option order" to={`/admin/exams${q}`} />
+              <Step done={data.eligible > 0} label="Candidates eligible" detail={`${data.eligible} of ${data.roster.length} on the roster`} to={`/admin/students${q}`} />
+              <Step done={exam.isPublished} label="Examination published" detail={exam.isPublished ? 'Visible to candidates' : 'Hidden from candidates'} to={`/admin/exams${q}`} />
             </ol>
           </div>
         </div>
       </section>
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Key figures">
-        <StatCard title="Question bank" value={data.questions.length} hint="Validated MCQs available" icon={HelpCircle} onClick={() => navigate('/admin/questions')} />
-        <StatCard title="Eligible candidates" value={`${data.eligible}/${data.roster.length}`} hint="On the examination roster" icon={Users} tone="success" onClick={() => navigate('/admin/students')} />
-        <StatCard title="Attempts in progress" value={data.active} hint={data.active ? 'Candidates writing now' : 'No live attempts'} icon={Timer} tone={data.active ? 'warning' : 'neutral'} onClick={() => navigate('/admin/results')} />
-        <StatCard title="Answer sheets evaluated" value={data.submitted.length} hint={data.avg === null ? 'No submissions yet' : `Average ${data.avg.toFixed(1)}%`} icon={ClipboardList} onClick={() => navigate('/admin/results')} />
+        <StatCard title="Question bank" value={data.questions.length} hint="Validated MCQs available" icon={HelpCircle} onClick={() => navigate(`/admin/questions${q}`)} />
+        <StatCard title="Eligible candidates" value={`${data.eligible}/${data.roster.length}`} hint="On the examination roster" icon={Users} tone="success" onClick={() => navigate(`/admin/students${q}`)} />
+        <StatCard title="Attempts in progress" value={data.active} hint={data.active ? 'Candidates writing now' : 'No live attempts'} icon={Timer} tone={data.active ? 'warning' : 'neutral'} onClick={() => navigate(`/admin/results${q}`)} />
+        <StatCard title="Answer sheets evaluated" value={data.submitted.length} hint={data.avg === null ? 'No submissions yet' : `Average ${data.avg.toFixed(1)}%`} icon={ClipboardList} onClick={() => navigate(`/admin/results${q}`)} />
       </section>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -131,7 +137,7 @@ export default function AdminDashboard() {
           className="lg:col-span-2"
           title="Recent submissions"
           subtitle="Latest evaluated answer sheets"
-          action={<Link to="/admin/results" className="text-xs font-semibold text-[#1E3A5F] hover:underline">All results</Link>}
+          action={<Link to={`/admin/results${q}`} className="text-xs font-semibold text-[#1E3A5F] hover:underline">All results</Link>}
           bodyClassName="p-0"
         >
           {data.submitted.length === 0 ? (
@@ -182,4 +188,11 @@ export default function AdminDashboard() {
       </div>
     </div>
   );
+}
+
+export default function AdminDashboard() {
+  const ctx = useAdminExamContext();
+  if (!ctx.allowed) return <ScopeDenied examCode={ctx.examCode} scope={ctx.scope} />;
+  if (!ctx.service.exists()) return <ExamNotCreated eyebrow="Examination Office" title="Dashboard" examCode={ctx.examCode} summaries={ctx.summaries} onSelect={ctx.selectExam} scope={ctx.scope} />;
+  return <DashboardView key={ctx.examCode} {...ctx} />;
 }

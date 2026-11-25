@@ -1,0 +1,6 @@
+Subject,Topic,Question,Option A,Option B,Option C,Option D,Correct Answer,Difficulty,Marks,Negative Marks
+Operating Systems,Memory,Segmentation divides a program into:,Fixed-size pages,Logical variable-size segments,Disk sectors,Cache lines,B,Medium,2,0
+Operating Systems,Scheduling,The time from submission of a process to its completion is called:,Waiting time,Turnaround time,Response time,Burst time,B,Easy,2,0
+Operating Systems,Deadlocks,A resource-allocation graph with a cycle and single-instance resources indicates:,No deadlock,A deadlock,Starvation only,Thrashing,B,Medium,2,0
+Operating Systems,Synchronization,Which operation on a semaphore may block the calling process?,signal(),wait(),init(),destroy(),B,Medium,2,0
+Operating Systems,Kernel,The part of the OS that is always resident in memory is the:,Shell,Kernel,Compiler,Loader script,B,Easy,2,0

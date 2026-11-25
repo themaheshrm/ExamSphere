@@ -1,0 +1,6 @@
+Subject,Topic,Question,Option A,Option B,Option C,Option D,Correct Answer,Difficulty,Marks,Negative Marks
+Java Programming,Basics,Which of these is not a primitive type in Java?,int,boolean,String,char,C,Easy,2,0
+Java Programming,OOP,The keyword used to refer to the current object in Java is:,self,this,super,current,B,Medium,2,0
+Java Programming,Exceptions,Which keyword is used in a method signature to declare checked exceptions?,throw,throws,catch,final,B,Medium,2,0
+Java Programming,Collections,Which interface does ArrayList implement?,Set,List,Map,Queue only,B,Medium,2,0
+Java Programming,Keywords,A method declared final in a class:,Cannot be overridden,Cannot be called,Must be static,Must be abstract,A,Easy,2,0

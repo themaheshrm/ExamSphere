@@ -10,7 +10,8 @@ import EmptyState from '../../components/common/EmptyState';
 import StatusBadge from '../../components/common/StatusBadge';
 import Tabs, { TabPanel } from '../../components/common/Tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
-import { examRandomizerService } from '../../services/examRandomizerService';
+import { useAdminExamContext } from '../../utils/useAdminExamContext';
+import { ExamSwitcher, ExamNotCreated, ScopeDenied } from '../../components/admin/ExamScope';
 import { studentRosterService } from '../../services/studentRosterService';
 import { PATTERN_LABELS } from '../../utils/randomizationEngine';
 import { usePagination } from '../../utils/usePagination';
@@ -21,7 +22,7 @@ import { useDataVersion } from '../../utils/useDataVersion';
 const selectCls = 'es-select h-9 w-full rounded-sm border border-slate-300 bg-white pl-3 text-sm focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]';
 const LETTERS = ['A', 'B', 'C', 'D'];
 
-export default function ResultsPage() {
+function ResultsView({ service, examCode, summaries, selectExam }) {
   useDataVersion(); // live: re-read when attempts change
   const [tab, setTab] = useState('register');
   const [search, setSearch] = useState('');
@@ -29,9 +30,9 @@ export default function ResultsPage() {
   const [outcome, setOutcome] = useState('');
   const [detail, setDetail] = useState(null);
 
-  const attempts = examRandomizerService.listAttempts();
+  const attempts = service.listAttempts();
   const names = Object.fromEntries(studentRosterService.list().map((s) => [s.usn, s.name]));
-  const { meta } = examRandomizerService.getExamState();
+  const { meta } = service.getExamState();
 
   const submitted = attempts.filter((a) => a.status === 'submitted' && a.result);
   const active = attempts.filter((a) => a.status === 'active');
@@ -113,7 +114,12 @@ export default function ResultsPage() {
         eyebrow="Examinations"
         title="Results & Reports"
         description={`${meta.courseCode} — ${meta.courseTitle}. Automatically evaluated against each candidate's pattern answer key.`}
-        actions={<Button variant="secondary" icon={Download} onClick={exportCsv} disabled={!register.length}>Export CSV</Button>}
+        actions={(
+          <>
+            <ExamSwitcher summaries={summaries} value={examCode} onChange={selectExam} />
+            <Button variant="secondary" icon={Download} onClick={exportCsv} disabled={!register.length}>Export CSV</Button>
+          </>
+        )}
       />
 
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 md:grid-cols-3 xl:grid-cols-6" aria-label="Result summary">
@@ -332,4 +338,11 @@ export default function ResultsPage() {
       </Modal>
     </div>
   );
+}
+
+export default function ResultsPage() {
+  const ctx = useAdminExamContext();
+  if (!ctx.allowed) return <ScopeDenied examCode={ctx.examCode} scope={ctx.scope} />;
+  if (!ctx.service.exists()) return <ExamNotCreated eyebrow="Examinations" title="Results & Reports" examCode={ctx.examCode} summaries={ctx.summaries} onSelect={ctx.selectExam} scope={ctx.scope} />;
+  return <ResultsView key={ctx.examCode} {...ctx} />;
 }

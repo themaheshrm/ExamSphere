@@ -104,7 +104,7 @@ export function randomizeQuestionOptions(question, rng = Math.random) {
  * @param {Array} masterQuestions - Master array of 25 MCQ questions
  * @returns {Object} - { patterns: Record<string, PatternData>, verificationReport: Object }
  */
-export function generate10ExamPatterns(masterQuestions) {
+export function generate10ExamPatterns(masterQuestions, { paperCodePrefix = '22CS601' } = {}) {
   if (!masterQuestions || masterQuestions.length !== 25) {
     throw new Error(`Exactly 25 questions are required to generate patterns. Received: ${masterQuestions?.length || 0}`);
   }
@@ -146,7 +146,7 @@ export function generate10ExamPatterns(masterQuestions) {
     patterns[label] = {
       patternId: label,
       patternLabel: `Pattern ${label}`,
-      paperCode: `22CS601-${label}`,
+      paperCode: `${paperCodePrefix}-${label}`,
       totalQuestions: 25,
       questions: patternQuestions, // Array of 25 questions in pattern sequence
       answerKey,                  // Key: questionId -> displayed correct option index

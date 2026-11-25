@@ -1,0 +1,6 @@
+Subject,Topic,Question,Option A,Option B,Option C,Option D,Correct Answer,Difficulty,Marks,Negative Marks
+Computer Networks,Application,The default port number for HTTP is:,21,25,80,110,C,Easy,2,0
+Computer Networks,Transport,Which TCP flag is used to initiate a connection?,FIN,SYN,RST,PSH,B,Medium,2,0
+Computer Networks,Devices,Which device operates at the network layer and forwards packets between networks?,Hub,Repeater,Router,Bridge,C,Easy,2,0
+Computer Networks,Addressing,Which of these is a private IPv4 address range?,8.8.8.0/24,192.168.0.0/16,1.1.1.0/24,100.0.0.0/8,B,Medium,2,0
+Computer Networks,Data Link,The size of a MAC address is:,32 bits,48 bits,64 bits,128 bits,B,Medium,2,0

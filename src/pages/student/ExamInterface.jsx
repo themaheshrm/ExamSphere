@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Eraser, Flag, LayoutGrid, Send, X,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { examRandomizerService } from '../../services/examRandomizerService';
+import { getExamService } from '../../services/examRegistry';
+import { DEFAULT_EXAM_CODE } from '../../services/adminScope';
 import { studentRosterService } from '../../services/studentRosterService';
 import { activityLogService } from '../../services/activityLogService';
 import { platformService } from '../../services/platformService';
@@ -90,6 +91,10 @@ export default function ExamInterface() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [settings] = useState(() => platformService.getSettings());
+  const [searchParams] = useSearchParams();
+  // `?exam=<code>` selects a subject examination; absent → the original 22CS601.
+  // Unknown codes resolve to no service, so no paper can be assigned.
+  const [examService] = useState(() => getExamService(searchParams.get('exam') || DEFAULT_EXAM_CODE));
 
   // ── Student details ────────────────────────────────────────────────────────
   const studentName = user?.name || studentInfo.name;
@@ -103,15 +108,16 @@ export default function ExamInterface() {
   const [alreadySubmitted] = useState(() => {
     const id = String(studentIdentity ?? '').trim().toUpperCase();
     if (!id) return false;
-    const courseCode = examRandomizerService.getExamState().meta.courseCode;
-    const own = examRandomizerService.listAttempts().filter((a) => a.studentIdentifier === id && a.courseCode === courseCode);
+    const courseCode = examService?.getExamState()?.meta.courseCode;
+    if (!courseCode) return false;
+    const own = examService.listAttempts().filter((a) => a.studentIdentifier === id && a.courseCode === courseCode);
     return own.some((a) => a.status === 'submitted') && !own.some((a) => a.status === 'active');
   });
 
   // ── Fetch Randomized Student Paper ─────────────────────────────────────────
   // Returns null when unpublished or storage is unavailable; withheld
   // candidates are stopped before an attempt is created.
-  const [studentExam] = useState(() => (isEligible && !alreadySubmitted ? examRandomizerService.getStudentExam(studentIdentity) : null));
+  const [studentExam] = useState(() => (isEligible && !alreadySubmitted ? examService?.getStudentExam(studentIdentity) ?? null : null));
   const unavailableMessage = !studentIdentity
     ? 'A verified student identifier is required before an exam attempt can be assigned.'
     : !isEligible
@@ -175,7 +181,7 @@ export default function ExamInterface() {
     submittingRef.current = true;
     clearInterval(timerRef.current);
     try {
-      const result = examRandomizerService.evaluateSubmission(
+      const result = examService.evaluateSubmission(
         studentIdentity,
         answersRef.current,
         studentExam.attemptId,
@@ -198,7 +204,7 @@ export default function ExamInterface() {
       setSubmitError(error.message || 'Your answers could not be submitted. Do not close this window; try again or inform the invigilator.');
       setShowSubmitModal(true);
     }
-  }, [studentIdentity, studentExam, sessionKey, user]);
+  }, [examService, studentIdentity, studentExam, sessionKey, user]);
 
   // ── Sync attempt state to sessionStorage (survives page reloads) ───────────
   useEffect(() => {

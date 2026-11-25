@@ -1,11 +1,13 @@
 import { readJson, writeJson, emitChange } from './localStore.js';
 import { examRandomizerService } from './examRandomizerService.js';
-import { questionBankService } from './questionBankService.js';
 import { studentRosterService } from './studentRosterService.js';
 import { activityLogService } from './activityLogService.js';
 import { platformService } from './platformService.js';
 import { assignPatternForCandidate } from '../utils/patternAssignment.js';
 import { notifications as studentCirculars } from '../data/studentMockData.js';
+import { getAdminScope } from './adminScope.js';
+import { getExamService } from './examRegistry.js';
+import { scopedQuestionBank } from './scopedQuestionBank.js';
 import { USER_ROLES } from '../utils/constants.js';
 
 const READ_KEY = 'examsphere_notifications_read_v1';
@@ -56,28 +58,36 @@ function studentNotifications(user) {
 
 function adminNotifications(user) {
   const prefs = { submissionAlerts: true, publicationAlerts: true, ...(readJson(PREFS_KEY, {})[userKey(user)] || {}) };
-  const state = examRandomizerService.getExamState();
+  // Subject-scoped admins are notified about their own subject only.
+  const scope = getAdminScope(user);
+  const service = scope.scoped ? getExamService(scope.subjectCodes[0]) : examRandomizerService;
+  const q = scope.scoped ? `?exam=${scope.subjectCodes[0]}` : '';
+  const state = service.getExamState();
   const items = [];
-  const bankSize = questionBankService.getQuestions().length;
-  const attempts = examRandomizerService.listAttempts();
+  const bankSize = scopedQuestionBank(scope).getQuestions().length;
+  if (!state) {
+    items.push({ id: `create-${scope.subjectCodes[0]}`, tone: 'info', title: `Create the ${scope.label} examination`, message: 'Select 25 questions to generate patterns A–J.', at: null, link: `/admin/exams${q}` });
+    return items;
+  }
+  const attempts = service.listAttempts();
   const active = attempts.filter((a) => a.status === 'active');
   const submitted = attempts.filter((a) => a.status === 'submitted');
   const withheld = studentRosterService.list().filter((s) => s.status === 'Withheld');
 
   if (!state.isPublished && prefs.publicationAlerts) {
-    items.push({ id: `draft-${state.lastGeneratedAt}`, tone: 'warning', title: `${state.meta.courseCode} is in draft`, message: 'Candidates cannot start the examination until it is published.', at: state.lastGeneratedAt, link: '/admin/exams' });
+    items.push({ id: `draft-${state.lastGeneratedAt}`, tone: 'warning', title: `${state.meta.courseCode} is in draft`, message: 'Candidates cannot start the examination until it is published.', at: state.lastGeneratedAt, link: `/admin/exams${q}` });
   }
   if (state.verificationReport && !state.verificationReport.isValid) {
-    items.push({ id: `verify-${state.lastGeneratedAt}`, tone: 'danger', title: 'Pattern verification failed', message: 'Regenerate the 10 patterns before publishing.', at: state.lastGeneratedAt, link: '/admin/exams' });
+    items.push({ id: `verify-${state.lastGeneratedAt}`, tone: 'danger', title: 'Pattern verification failed', message: 'Regenerate the 10 patterns before publishing.', at: state.lastGeneratedAt, link: `/admin/exams${q}` });
   }
   if (bankSize < 25) {
-    items.push({ id: `bank-${bankSize}`, tone: 'warning', title: 'Question bank below 25 questions', message: `Only ${bankSize} questions are available; an examination needs 25.`, at: null, link: '/admin/questions' });
+    items.push({ id: `bank-${bankSize}`, tone: 'warning', title: 'Question bank below 25 questions', message: `Only ${bankSize} questions are available; an examination needs 25.`, at: null, link: `/admin/questions${q}` });
   }
   if (active.length) {
-    items.push({ id: `active-${active.length}-${active[0].attemptId}`, tone: 'info', title: `${active.length} attempt${active.length === 1 ? '' : 's'} in progress`, message: 'Candidates are currently writing the examination.', at: active[0].startedAt, link: '/admin/results' });
+    items.push({ id: `active-${active.length}-${active[0].attemptId}`, tone: 'info', title: `${active.length} attempt${active.length === 1 ? '' : 's'} in progress`, message: 'Candidates are currently writing the examination.', at: active[0].startedAt, link: `/admin/results${q}` });
   }
-  if (prefs.submissionAlerts) submitted.slice(0, 5).forEach((a) => items.push({ id: `sub-${a.attemptId}`, tone: 'success', title: `Answer sheet submitted · ${a.studentIdentifier}`, message: `${a.paperCode}: ${a.result?.score ?? '—'} / ${a.result?.maxScore ?? '—'}`, at: a.submittedAt, link: '/admin/results' }));
-  if (withheld.length) {
+  if (prefs.submissionAlerts) submitted.slice(0, 5).forEach((a) => items.push({ id: `sub-${a.attemptId}`, tone: 'success', title: `Answer sheet submitted · ${a.studentIdentifier}`, message: `${a.paperCode}: ${a.result?.score ?? '—'} / ${a.result?.maxScore ?? '—'}`, at: a.submittedAt, link: `/admin/results${q}` }));
+  if (withheld.length && !scope.scoped) {
     items.push({ id: `withheld-${withheld.length}`, tone: 'neutral', title: `${withheld.length} candidate${withheld.length === 1 ? '' : 's'} withheld`, message: 'Withheld candidates cannot start the examination.', at: null, link: '/admin/students' });
   }
   return items;

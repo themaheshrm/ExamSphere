@@ -1,6 +1,8 @@
 import { examQuestions, examMeta } from '../data/examMockData.js';
+import { SUBJECT_QUESTIONS } from '../data/subjectQuestionBanks.js';
 
 export const QUESTION_BANK_STORAGE_KEY = 'examsphere_question_bank_v1';
+const SUBJECT_BANKS_ADDED_KEY = 'examsphere_subject_banks_added_v1';
 export const DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
 
 function clone(value) {
@@ -93,6 +95,7 @@ class QuestionBankService {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
           this.memoryQuestions = parsed;
+          this.addSubjectBanksOnce();
           return;
         }
       }
@@ -100,7 +103,34 @@ class QuestionBankService {
       // Keep the demo usable in memory when storage is unavailable or invalid.
     }
     this.memoryQuestions = seededQuestions();
+    this.addSubjectBanksOnce();
     this.persist();
+  }
+
+  /**
+   * Append the five demo subject banks (DSA, DBMS, OS, CN, Java) exactly
+   * once. Existing questions are never changed; a subject question is skipped
+   * if its id or statement is already present.
+   */
+  addSubjectBanksOnce() {
+    try {
+      if (localStorage.getItem(SUBJECT_BANKS_ADDED_KEY)) return;
+    } catch {
+      // storage unavailable: still add for this in-memory session
+    }
+    const ids = new Set(this.memoryQuestions.map((q) => q.id));
+    const statements = new Set(this.memoryQuestions.map((q) => normalizeQuestionText(q.statement ?? q.text)));
+    const now = new Date().toISOString();
+    const additions = SUBJECT_QUESTIONS
+      .filter((q) => !ids.has(q.id) && !statements.has(normalizeQuestionText(q.statement)))
+      .map(({ subjectCode: _code, ...q }) => ({ ...q, options: [...q.options], createdAt: now, updatedAt: now }));
+    this.memoryQuestions = [...this.memoryQuestions, ...additions];
+    this.persist();
+    try {
+      localStorage.setItem(SUBJECT_BANKS_ADDED_KEY, '1');
+    } catch {
+      // ignore
+    }
   }
 
   persist() {
