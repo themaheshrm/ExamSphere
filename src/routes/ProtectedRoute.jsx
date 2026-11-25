@@ -11,7 +11,7 @@ import { ROLE_LABELS } from '../utils/constants';
  * Enforces session authentication and role-based access control.
  */
 export default function ProtectedRoute({ allowedRoles = [] }) {
-  const { isAuthenticated, role, isLoading } = useAuth();
+  const { isAuthenticated, role, isLoading, user } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -28,6 +28,11 @@ export default function ProtectedRoute({ allowedRoles = [] }) {
   // Not authenticated: Redirect to centralized login
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Accounts with a temporary password must set their own password first.
+  if (user?.mustChangePassword && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
   }
 
   // Role validation if specific roles are required

@@ -45,18 +45,17 @@ export default function SystemSettingsPage() {
       <PageHeader
         eyebrow="Platform Administration"
         title="Platform Settings"
-        description="Defaults applied to every candidate examination screen and portal page."
       />
 
-      <Card title="Result display" subtitle="What candidates see immediately after submitting">
+      <Card title="Result display" subtitle="After a candidate submits">
         <fieldset className="grid gap-3 md:grid-cols-2">
           <legend className="sr-only">Result display</legend>
-          {radio('resultDisplay', 'immediate', 'Show provisional score', 'Candidates see their score, pass status and answer counts on submission.')}
-          {radio('resultDisplay', 'withheld', 'Withhold until published', 'Candidates only see a submission receipt; results are published by the examination office.')}
+          {radio('resultDisplay', 'immediate', 'Show provisional score', 'Score and pass status on submission.')}
+          {radio('resultDisplay', 'withheld', 'Withhold until published', 'Submission receipt only.')}
         </fieldset>
       </Card>
 
-      <Card title="Examination screen" subtitle="Candidate-facing behaviour during an attempt">
+      <Card title="Examination screen">
         <div className="grid gap-5 md:grid-cols-2">
           <InputField
             label="Low-time warning (minutes)"
@@ -66,19 +65,18 @@ export default function SystemSettingsPage() {
             value={form.timerWarningMinutes}
             onChange={(e) => setForm({ ...form, timerWarningMinutes: e.target.value })}
             error={errors.timerWarningMinutes}
-            helperText="The timer turns amber and a screen-reader alert is announced."
           />
           <label className="flex items-start gap-3 rounded-sm border border-slate-200 p-3">
             <input type="checkbox" checked={form.showPatternToCandidates} onChange={(e) => setForm({ ...form, showPatternToCandidates: e.target.checked })} className="mt-0.5 h-4 w-4 accent-[#1E3A5F]" />
             <span>
               <span className="block text-sm font-medium text-slate-900">Show paper pattern to candidates</span>
-              <span className="block text-xs text-slate-500">Displays the assigned pattern (A–J) and paper code on the dashboard and exam screens.</span>
+              <span className="block text-xs text-slate-500">Pattern (A–J) and paper code on candidate screens.</span>
             </span>
           </label>
         </div>
       </Card>
 
-      <Card title="Help desk & notices" subtitle="Shown on candidate help pages and error screens">
+      <Card title="Help desk & notices">
         <div className="grid gap-5 md:grid-cols-2">
           <InputField label="Support email" type="email" required value={form.supportEmail} onChange={(e) => setForm({ ...form, supportEmail: e.target.value })} error={errors.supportEmail} />
           <InputField label="Helpline" value={form.helplinePhone} onChange={(e) => setForm({ ...form, helplinePhone: e.target.value })} />
@@ -93,7 +91,7 @@ export default function SystemSettingsPage() {
               className="w-full rounded-sm border border-slate-300 px-3 py-2 text-sm focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]"
               placeholder="e.g. Scheduled maintenance on Sunday 02:00–04:00 IST. Examinations are unaffected."
             />
-            <p className="mt-1 text-[11px] text-slate-500">Shown as a banner at the top of every portal page. Leave empty to hide. {form.maintenanceNotice.length}/240</p>
+            <p className="mt-1 text-[11px] text-slate-500">Banner on every page; leave empty to hide. {form.maintenanceNotice.length}/240</p>
           </div>
         </div>
       </Card>

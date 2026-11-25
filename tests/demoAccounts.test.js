@@ -20,11 +20,14 @@ const state = service.getExamState();
 const master = Object.fromEntries(state.masterQuestions.map((q) => [q.id, q]));
 const papers = Object.fromEntries(DEMO_STUDENTS.map((s) => [s.usn, service.getStudentExam(s.usn)]));
 
-test('CS001–CS005 are assigned patterns A–E (explicit, stable, case-insensitive)', () => {
+test('CS001–CS005 keep patterns A–E and CS006 gets F (explicit, stable, case-insensitive)', () => {
   assert.deepEqual(DEMO_STUDENTS.map((s) => [s.usn, s.name, s.branch, s.pattern]), [
     ['CS001', 'CS Demo 01', 'CSE', 'A'], ['CS002', 'CS Demo 02', 'CSE', 'B'], ['CS003', 'CS Demo 03', 'CSE', 'C'],
-    ['CS004', 'CS Demo 04', 'CSE', 'D'], ['CS005', 'CS Demo 05', 'CSE', 'E'],
+    ['CS004', 'CS Demo 04', 'CSE', 'D'], ['CS005', 'CS Demo 05', 'CSE', 'E'], ['CS006', 'CS Demo 06', 'CSE', 'F'],
   ]);
+  assert.equal(new Set(DEMO_STUDENTS.map((s) => s.pattern)).size, DEMO_STUDENTS.length, 'no two demo accounts share a pattern');
+  assert.deepEqual(DEMO_STUDENTS.find((s) => s.usn === 'CS006'),
+    { usn: 'CS006', name: 'CS Demo 06', branch: 'CSE', pattern: 'F', purpose: 'exam-walkthrough', email: 'cs006@drait.edu.in', department: 'Computer Science & Engineering', semester: 6, section: 'D' });
   for (const s of DEMO_STUDENTS) {
     assert.equal(assignPatternForCandidate(s.usn.toLowerCase()), s.pattern);
     assert.equal(papers[s.usn].patternLabel, `Pattern ${s.pattern}`);
@@ -39,14 +42,14 @@ test('non-demo candidates keep the existing hash-based assignment', () => {
   }
 });
 
-test('same 25 questions for all five, in five different orders', () => {
+test('same 25 questions for every demo account, each in a different order', () => {
   const orders = DEMO_STUDENTS.map((s) => papers[s.usn].questions.map((q) => q.id));
   const expected = Object.keys(master).map(Number).sort((a, b) => a - b);
   for (const order of orders) {
     assert.equal(order.length, 25);
     assert.deepEqual([...order].sort((a, b) => a - b), expected);
   }
-  assert.equal(new Set(orders.map((o) => o.join(','))).size, 5, 'question sequences must all differ');
+  assert.equal(new Set(orders.map((o) => o.join(','))).size, DEMO_STUDENTS.length, 'question sequences must all differ');
   assert.equal(new Set(orders.map((o) => o[0])).size > 1, true, 'first questions should differ across patterns');
 });
 
@@ -80,7 +83,7 @@ test('correct-answer mapping survives shuffling: choosing the master answer scor
 
 test('refresh / re-login keeps the same attempt and order; reset is demo-only', async () => {
   // fresh students on a clean slate after resetting the graded attempts above
-  assert.equal(service.resetDemoAttempts(DEMO_STUDENTS.map((s) => s.usn)), 5);
+  assert.equal(service.resetDemoAttempts(DEMO_STUDENTS.map((s) => s.usn)), DEMO_STUDENTS.length);
   const first = service.getStudentExam('CS003');
   const again = service.getStudentExam('cs003');               // refresh / sign in again
   assert.equal(again.attemptId, first.attemptId);

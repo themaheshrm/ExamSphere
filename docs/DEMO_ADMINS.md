@@ -24,7 +24,12 @@ The **institution administrator** (e.g. `ADM-8942`) and the **super administrato
 
 ## How it is enforced
 
-- **Identity.** Sign-in uses the normal Staff login: Login ID → `resolve_login_identifier` → Supabase `signInWithPassword` → verified `profiles` row (`role = admin`, `staff_id = ADMIN00x`). The subject comes from that server-verified `staff_id`, never from the URL, local storage or form input.
+- **Identity.** Sign-in uses the normal Staff login. The Login ID is resolved by `resolve_login_identifier`, or by the built-in `<id>@drait.edu.in` fallback when 003/004 are not applied. Then Supabase `signInWithPassword` runs and the `profiles` row is verified (`role = admin`).
+- **Subject.** The admin's subject is resolved from **any** of these:
+  - `profiles.staff_id`, when that column exists. It does **not** exist on the live project yet.
+  - `app_metadata.staff_id` in the signed access token. It is set only by the service role; the same token authorises the profile read, so a forged token is rejected.
+  - The verified sign-in email `admin00x@drait.edu.in`.
+- **Closed by default.** Every signal can only narrow access. A demo admin is never treated as institution-wide, and conflicting identities get no access. The subject never comes from the URL, browser storage or form input.
 - **Web app.** Every admin page resolves its exam through `getScopedExamService` and `scopedQuestionBank` (`src/services/`):
   - Changing `?exam=` to another subject shows **Access restricted**.
   - Service calls with another subject's question ID throw.
@@ -35,7 +40,19 @@ The **institution administrator** (e.g. `ADM-8942`) and the **super administrato
 
 ## 1. Provision the accounts (one-time, operator machine)
 
-Requirements: the same as for the student demo accounts (`docs/DEMO_ACCOUNTS.md`). If 005+ are applied, the Dr. AIT `institutions` row (`1DA`) must exist.
+Requirements:
+- **Required columns.** `profiles` must have `id`, `role` and `full_name`. `email`, `staff_id`, `usn` and `institution_id` are used only if they exist.
+- **No schema changes.** The script never adds columns or applies migrations.
+- **Institution row.** If 005+ are applied, the Dr. AIT `institutions` row (`1DA`) must exist.
+
+**Always run `--dry-run` first.** It performs the real read-only checks and writes nothing:
+- the `profiles` columns that exist;
+- Auth users with the five emails;
+- profiles already using those emails or Login IDs;
+- the Dr. AIT institution;
+- whether `subject_admins` (migration 011) exists.
+
+It prints a schema report and, per admin, what it *would* do (`create`, `rotate password + refresh profile`, or `repair missing profile`). Any conflict is listed, and the run ends with *Nothing was changed*.
 
 ```bash
 export SUPABASE_URL="https://<project-ref>.supabase.co"
@@ -55,7 +72,7 @@ node scripts/provision-demo-admins.mjs
 
 What the script does:
 - **Creates the users.** It calls `auth.admin.createUser` (`email_confirm: true`, so no email is sent) with `app_metadata` set to `{ role: 'admin', staff_id, subject_code, examsphere_demo: true }`.
-- **Sets the profiles.** Each profile gets `role = admin`, `staff_id = ADMIN00x`, the email and name, and the Dr. AIT institution if one exists.
+- **Sets the profiles.** Each profile gets `role = admin` and the name. If those columns exist, it also gets `staff_id = ADMIN00x`, the email and the Dr. AIT institution. On the live schema, only `role` and `full_name` (and `usn = null`) are written.
 - **Adds the database scope when 011 is applied.** It writes one `subject_admins` row per admin, and creates the subject catalogue row only if it is missing. It never applies migrations; it only detects whether the table exists.
 - **Protects real accounts.** If any of the five emails or Login IDs belongs to a non-demo account, it refuses before writing anything.
 - **Is safe to re-run.** Re-running rotates the passwords and creates no duplicates.

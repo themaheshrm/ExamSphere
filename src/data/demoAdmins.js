@@ -16,6 +16,12 @@ export const DEMO_ADMINS = [
 
 const BY_STAFF_ID = new Map(DEMO_ADMINS.map((a) => [a.staffId, a]));
 
+const BY_EMAIL = new Map(DEMO_ADMINS.map((a) => [a.email, a]));
+
 export function demoAdmin(staffId) {
   return BY_STAFF_ID.get(String(staffId ?? '').trim().toUpperCase()) || null;
+}
+
+export function demoAdminByEmail(email) {
+  return BY_EMAIL.get(String(email ?? '').trim().toLowerCase()) || null;
 }

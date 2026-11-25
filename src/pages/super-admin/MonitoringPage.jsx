@@ -86,7 +86,6 @@ export default function MonitoringPage() {
       <PageHeader
         eyebrow="Platform Administration"
         title="System Monitoring"
-        description="Live checks of authentication, examination integrity and attempt storage for this deployment."
         meta={<span>Last checked {formatDateTime(checkedAt)}</span>}
         actions={<Button variant="secondary" icon={RefreshCw} onClick={() => { setAuthStatus({ state: 'checking', ms: null }); setCheckedAt(new Date().toISOString()); }}>Run checks again</Button>}
       />
@@ -131,7 +130,7 @@ export default function MonitoringPage() {
           </dl>
         </Card>
 
-        <Card title="Client data stores" subtitle="Records held in this browser by the demo services" bodyClassName="p-0" action={<Timer className="h-4 w-4 text-slate-400" aria-hidden="true" />}>
+        <Card title="Client data stores" bodyClassName="p-0" action={<Timer className="h-4 w-4 text-slate-400" aria-hidden="true" />}>
           <Table className="rounded-none border-0">
             <TableHeader>
               <TableRow>

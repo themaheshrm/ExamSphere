@@ -11,6 +11,7 @@
  */
 
 import { supabase } from './supabase';
+import { buildUserObject } from './userObject.js';
 import { USER_ROLES } from '../utils/constants';
 
 // ─── Allowed DB role values → frontend enum ────────────────────────────────
@@ -67,22 +68,8 @@ export async function fetchVerifiedProfile(userId) {
   return { profile, role };
 }
 
-/**
- * Builds the user object exposed to the UI from a verified profile + auth email.
- * This is the ONLY place the user shape is defined.
- */
-export function buildUserObject(authUser, profile, role) {
-  return {
-    id: authUser.id,
-    name: profile.full_name || authUser.email?.split('@')[0] || 'User',
-    email: authUser.email,
-    identifier: profile.usn || profile.staff_id || authUser.email,
-    usn: profile.usn || null,
-    staffId: profile.staff_id || null,
-    role,
-    institution_id: profile.institution_id || null,
-  };
-}
+// buildUserObject / decodeJwtClaims live in userObject.js (pure, unit-tested).
+export { buildUserObject, decodeJwtClaims } from './userObject.js';
 
 // ─── Identifier resolution ──────────────────────────────────────────────────
 
@@ -187,7 +174,7 @@ export const authService = {
         );
       }
 
-      const user = buildUserObject(authData.user, profile, verifiedRole);
+      const user = buildUserObject(authData.user, profile, verifiedRole, authData.session.access_token);
 
       return {
         user,

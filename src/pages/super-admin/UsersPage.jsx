@@ -19,7 +19,6 @@ import { platformService } from '../../services/platformService';
 import { activityLogService } from '../../services/activityLogService';
 import { usePagination } from '../../utils/usePagination';
 import { useAuth } from '../../context/AuthContext';
-import { INSTITUTION } from '../../utils/constants';
 import { formatDate } from '../../utils/format';
 
 const EMPTY = { name: '', email: '', role: 'admin', staffId: '', status: 'Active' };
@@ -69,7 +68,6 @@ export default function UsersPage() {
       <PageHeader
         eyebrow="Platform Administration"
         title="Staff Accounts"
-        description={`Examination office administrators and platform operators for ${INSTITUTION.name}. Candidate accounts are managed on the Candidates page.`}
         actions={<Button icon={UserPlus} onClick={() => { setEditing(EMPTY); setErrors({}); }}>Add user</Button>}
       />
 
@@ -87,7 +85,7 @@ export default function UsersPage() {
           </select>
         </div>
         {shown.length === 0 ? (
-          <EmptyState icon={UserCog} title="No users found" description="Try another search or role filter." />
+          <EmptyState icon={UserCog} title="No users found" />
         ) : (
           <>
             <Table className="rounded-none border-0">

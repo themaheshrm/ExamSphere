@@ -90,7 +90,7 @@ test('every subject creates its own exam with 10 patterns <code>-A … -J from i
   assert.equal(examRandomizerService.getExamState().meta.courseCode, '22CS601', 'original exam untouched');
 });
 
-test('CS demo students get patterns A–E on subject exams; grading and results stay per subject', () => {
+test('CS demo students keep their patterns (A–E, CS006 F) on subject exams; grading and results stay per subject', () => {
   const dsa = getExamService('22CS302');
   const dbms = getExamService('22CS402');
   for (const s of DEMO_STUDENTS) {
@@ -100,7 +100,7 @@ test('CS demo students get patterns A–E on subject exams; grading and results 
     const answers = paper.questions.map((q) => q.options.indexOf(master[q.id].options[master[q.id].correctOption]));
     assert.equal(dsa.evaluateSubmission(s.usn, answers, paper.attemptId).correctCount, 25);
   }
-  assert.equal(dsa.listAttempts().length, 5);
+  assert.equal(dsa.listAttempts().length, DEMO_STUDENTS.length);
   assert.equal(dbms.listAttempts().length, 0, 'DBMS reports do not include DSA attempts');
   assert.equal(examRandomizerService.listAttempts().length, 0, '22CS601 reports do not include subject attempts');
   assert.equal(dbms.getStudentAttempt('CS001'), null);

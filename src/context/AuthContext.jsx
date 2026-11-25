@@ -56,7 +56,7 @@ export function AuthProvider({ children }) {
       }
 
       activeUserIdRef.current = userId;
-      setUser(buildUserObject(session.user, profile, role));
+      setUser(buildUserObject(session.user, profile, role, session.access_token));
     } catch (err) {
       // Discard stale resolution
       if (currentSeq !== hydrationSequenceRef.current) {
@@ -175,6 +175,13 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  // ── Refresh after a server-side account change (e.g. temporary password changed) ──
+  const refreshUser = useCallback(async () => {
+    const { data, error: refreshError } = await supabase.auth.refreshSession();
+    if (refreshError || !data?.session) throw new Error('Could not refresh your session. Sign in again.');
+    await hydrateFromSession(data.session, { force: true });
+  }, [hydrateFromSession]);
+
   // ── Clear error ───────────────────────────────────────────────────────────
   const clearError = useCallback(() => setError(null), []);
 
@@ -188,6 +195,7 @@ export function AuthProvider({ children }) {
     login,
     logout,
     clearError,
+    refreshUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

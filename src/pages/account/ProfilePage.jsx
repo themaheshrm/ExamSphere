@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { KeyRound, Mail, ShieldCheck } from 'lucide-react';
+import { KeyRound } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
 import PageHeader from '../../components/common/PageHeader';
@@ -13,8 +13,8 @@ import { formatDateTime } from '../../utils/format';
 
 const PREFS_KEY = 'examsphere_profile_prefs_v1';
 const PREF_OPTIONS = [
-  ['submissionAlerts', 'Answer-sheet submission alerts', 'Show a notification when a candidate submits.'],
-  ['publicationAlerts', 'Publication reminders', 'Remind me when an examination is still in draft.'],
+  ['submissionAlerts', 'Submission alerts', 'When a candidate submits.'],
+  ['publicationAlerts', 'Draft reminders', 'When an examination is still in draft.'],
 ];
 
 /** Account details, preferences and password reset for staff accounts. */
@@ -50,10 +50,10 @@ export default function ProfilePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader eyebrow="Account" title="My Profile" description="Your account details are managed by the platform administrator." />
+      <PageHeader eyebrow="Account" title="My Profile" />
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2" title="Account details" subtitle="Verified from the institutional directory">
+        <Card className="lg:col-span-2" title="Account details">
           <dl className="divide-y divide-slate-100 text-sm">
             {rows.map(([k, v]) => (
               <div key={k} className="grid gap-1 py-2.5 sm:grid-cols-3">
@@ -64,10 +64,8 @@ export default function ProfilePage() {
           </dl>
         </Card>
 
-        <Card title="Security" subtitle="Sign-in protection">
+        <Card title="Password">
           <div className="space-y-4 text-xs text-slate-600">
-            <p className="flex items-start gap-2"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> Your role is verified against the institutional profile on every sign-in.</p>
-            <p className="flex items-start gap-2"><Mail className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" /> Password reset links are sent to your registered email address.</p>
             <Button variant="secondary" icon={KeyRound} isLoading={sending} onClick={resetPassword} className="w-full">Send password reset link</Button>
           </div>
         </Card>

@@ -113,7 +113,7 @@ function ResultsView({ service, examCode, summaries, selectExam }) {
       <PageHeader
         eyebrow="Examinations"
         title="Results & Reports"
-        description={`${meta.courseCode} — ${meta.courseTitle}. Automatically evaluated against each candidate's pattern answer key.`}
+        description={`${meta.courseCode} — ${meta.courseTitle}`}
         actions={(
           <>
             <ExamSwitcher summaries={summaries} value={examCode} onChange={selectExam} />
@@ -166,7 +166,7 @@ function ResultsView({ service, examCode, summaries, selectExam }) {
               </select>
             </div>
             {register.length === 0 ? (
-              <EmptyState icon={ClipboardList} title={attempts.length ? 'No results match' : 'No attempts recorded yet'} description={attempts.length ? 'Adjust the filters to see more results.' : 'Results appear here automatically when candidates submit their answer sheets.'} />
+              <EmptyState icon={ClipboardList} title={attempts.length ? 'No results match' : 'No attempts recorded yet'} />
             ) : (
               <>
                 <Table className="rounded-none border-x-0 border-b-0">
@@ -210,10 +210,10 @@ function ResultsView({ service, examCode, summaries, selectExam }) {
 
         <TabPanel id="analysis" className={tab === 'analysis' ? 'pt-5' : 'hidden'}>
           {!submitted.length ? (
-            <Card><EmptyState icon={BarChart3} title="No evaluated answer sheets yet" description="Analysis is available once candidates submit." /></Card>
+            <Card><EmptyState icon={BarChart3} title="No evaluated answer sheets yet" /></Card>
           ) : (
             <div className="grid gap-6 lg:grid-cols-2">
-              <Card title="Score distribution" subtitle="Number of candidates by percentage band">
+              <Card title="Score distribution">
                 <ul className="space-y-2">
                   {distribution.map((b) => (
                     <li key={b.label} className="flex items-center gap-3 text-xs">
@@ -224,7 +224,7 @@ function ResultsView({ service, examCode, summaries, selectExam }) {
                   ))}
                 </ul>
               </Card>
-              <Card title="Performance by pattern" subtitle="Patterns should perform similarly; large gaps warrant review" bodyClassName="p-0">
+              <Card title="Performance by pattern" bodyClassName="p-0">
                 <Table className="rounded-none border-0">
                   <TableHeader>
                     <TableRow>
@@ -249,9 +249,9 @@ function ResultsView({ service, examCode, summaries, selectExam }) {
         </TabPanel>
 
         <TabPanel id="items" className={tab === 'items' ? 'pt-5' : 'hidden'}>
-          <Card title="Question analysis" subtitle="Share of candidates answering each question correctly (hardest first)" bodyClassName="p-0">
+          <Card title="Question analysis" subtitle="Correct answers per question, hardest first" bodyClassName="p-0">
             {itemAnalysis.length === 0 ? (
-              <EmptyState compact title="No data yet" description="Question statistics appear after the first submission." />
+              <EmptyState compact title="No data yet" />
             ) : (
               <Table className="rounded-none border-0">
                 <TableHeader>

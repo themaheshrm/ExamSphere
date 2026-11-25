@@ -47,7 +47,7 @@ export default function ActivityLogPage() {
       <PageHeader
         eyebrow="Platform Administration"
         title="Activity Logs"
-        description="Every recorded administrative action and answer-sheet submission, newest first. Entries cannot be edited or deleted from the portal."
+        description="Read-only · newest first"
         actions={<Button variant="secondary" icon={Download} onClick={exportCsv} disabled={!shown.length}>Export CSV</Button>}
       />
       <Card bodyClassName="p-0">
@@ -63,7 +63,7 @@ export default function ActivityLogPage() {
           </select>
         </div>
         {shown.length === 0 ? (
-          <EmptyState icon={ScrollText} title={entries.length ? 'No entries match' : 'No activity recorded yet'} description={entries.length ? 'Adjust the filters to see more entries.' : 'Publishing, imports, roster changes and submissions are recorded automatically.'} />
+          <EmptyState icon={ScrollText} title={entries.length ? 'No entries match' : 'No activity recorded yet'} />
         ) : (
           <>
             <Table className="rounded-none border-0">

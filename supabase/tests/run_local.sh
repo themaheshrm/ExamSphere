@@ -25,3 +25,4 @@ for f in migrations/00[5-9]_*.sql migrations/01[0-9]_*.sql; do "${P[@]}" -d "$DB
 "${P[@]}" -d "$DB" -f tests/100_e2e_security_test.sql 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE"
 psql -U authenticator -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/110_api_session_immutability.sql 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE"
 "${P[@]}" -d "$DB" -f tests/120_subject_admin_scope_test.sql 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE"
+"${P[@]}" -d "$DB" -f tests/130_temporary_password_gate_test.sql 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE"

@@ -33,7 +33,6 @@ export default function NotificationsPage() {
       <PageHeader
         eyebrow="Account"
         title="Notifications"
-        description="Alerts generated from the examination, question bank and candidate roster."
         actions={<Button variant="secondary" icon={CheckCheck} disabled={!unread.length} onClick={() => notificationService.markRead(user, items.map((n) => n.id))}>Mark all as read</Button>}
       />
       <Card bodyClassName="p-0">
@@ -41,7 +40,7 @@ export default function NotificationsPage() {
           <Tabs tabs={[{ id: 'all', label: 'All', count: items.length }, { id: 'unread', label: 'Unread', count: unread.length }]} value={filter} onChange={setFilter} label="Notification filter" />
         </div>
         {shown.length === 0 ? (
-          <EmptyState icon={Bell} title={filter === 'unread' ? 'No unread notifications' : 'No notifications'} description="You're up to date." />
+          <EmptyState icon={Bell} title={filter === 'unread' ? 'No unread notifications' : 'No notifications'} />
         ) : (
           <ul className="divide-y divide-slate-100">
             {shown.map((n) => (

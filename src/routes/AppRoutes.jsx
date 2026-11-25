@@ -5,6 +5,7 @@ import ProtectedRoute from './ProtectedRoute';
 import LoginPage from '../pages/auth/LoginPage';
 import HomePage from '../pages/public/HomePage';
 const ForgotPasswordPage = lazy(() => import('../pages/auth/ForgotPasswordPage'));
+const ChangePasswordPage = lazy(() => import('../pages/auth/ChangePasswordPage'));
 const ComponentShowcase = lazy(() => import('../pages/design-system/ComponentShowcase'));
 const AdminDashboard = lazy(() => import('../pages/admin/AdminDashboard'));
 const ExamManagementPage = lazy(() => import('../pages/admin/ExamManagementPage'));
@@ -44,6 +45,11 @@ export default function AppRoutes() {
         {/* Public Authentication Routes */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+
+        {/* First sign-in with a temporary password (any signed-in role) */}
+        <Route element={<ProtectedRoute />}>
+          <Route path="/change-password" element={<ChangePasswordPage />} />
+        </Route>
 
         {/* Full-screen Exam Interface — outside DashboardLayout */}
         <Route

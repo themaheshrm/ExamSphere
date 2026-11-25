@@ -37,7 +37,6 @@ export default function InstitutionProfilePage() {
       <PageHeader
         eyebrow="Platform Administration"
         title="Institution Profile"
-        description="ExamSphere is deployed exclusively for Dr. Ambedkar Institute of Technology."
       />
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -60,7 +59,7 @@ export default function InstitutionProfilePage() {
         </Card>
 
         <div className="space-y-6">
-          <Card title={institution.office} subtitle="Shown to candidates on help pages">
+          <Card title={institution.office}>
             <dl className="space-y-3 text-sm">
               <div><dt className="text-[11px] text-slate-500">Helpline</dt><dd className="font-medium text-slate-900">{settings.helplinePhone}</dd></div>
               <div><dt className="text-[11px] text-slate-500">Email</dt><dd className="font-medium text-slate-900">{settings.supportEmail}</dd></div>
