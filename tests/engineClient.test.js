@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 process.env.VITE_SUPABASE_URL ||= 'http://127.0.0.1:9';
 process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||= 'unit-test-anon-key';
@@ -41,7 +42,7 @@ test('no answer keys or exam business data in the frontend source', () => {
     const p = path.join(dir, f);
     if (statSync(p).isDirectory()) walk(p); else if (/\.(jsx?|mjs)$/.test(f)) files.push(p);
   });
-  walk(new URL('../src', import.meta.url).pathname);
+  walk(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src'));
   for (const file of files) {
     const code = readFileSync(file, 'utf8');
     assert.doesNotMatch(code, /correctOption:\s*\d/, `${file} embeds a keyed question`);
