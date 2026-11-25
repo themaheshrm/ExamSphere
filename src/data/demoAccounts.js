@@ -3,8 +3,10 @@
  *
  * These are ordinary student accounts (same Supabase Auth sign-in, same exam,
  * same attempt and grading rules). The only difference is that each has an
- * explicitly assigned paper pattern (A–E) instead of the USN-hash assignment,
- * so a live demo can show five consecutive patterns side by side.
+ * explicitly assigned paper pattern instead of the USN-hash assignment:
+ *   CS001–CS005 → A–E  (randomisation demo: five patterns side by side)
+ *   CS006       → F    (dedicated exam-walkthrough account: one student
+ *                       taking the examination end to end)
  *
  * No passwords live here: credentials are generated at provisioning time by
  * scripts/provision-demo-students.mjs and never committed.
@@ -15,6 +17,7 @@ export const DEMO_STUDENTS = [
   { usn: 'CS003', name: 'CS Demo 03', branch: 'CSE', pattern: 'C' },
   { usn: 'CS004', name: 'CS Demo 04', branch: 'CSE', pattern: 'D' },
   { usn: 'CS005', name: 'CS Demo 05', branch: 'CSE', pattern: 'E' },
+  { usn: 'CS006', name: 'CS Demo 06', branch: 'CSE', pattern: 'F', purpose: 'exam-walkthrough' },
 ].map((s) => ({
   ...s,
   email: `${s.usn.toLowerCase()}@drait.edu.in`,

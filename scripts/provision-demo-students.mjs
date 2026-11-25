@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /**
- * Provision the five ExamSphere demo CS student accounts in Supabase Auth.
+ * Provision the ExamSphere demo CS student accounts in Supabase Auth:
+ * CS001–CS005 (patterns A–E, randomisation demo) and CS006 (pattern F,
+ * dedicated exam-walkthrough account).
  *
  * Uses the supported Admin API (auth.admin.createUser) so the accounts sign
  * in through the normal ExamSphere login (USN → resolve_login_identifier or
@@ -23,11 +25,17 @@
  * SECURITY
  *  - Needs the service-role (secret) key in the environment. Run ONLY on an
  *    operator's machine; never commit it or paste it into chat. Never printed.
- *  - One strong temporary password (or DEMO_TEMP_PASSWORD) is printed ONCE.
+ *  - One strong temporary password (or DEMO_TEMP_PASSWORD) is printed ONCE and
+ *    is shared by the accounts processed in that run. With --only, only the
+ *    selected accounts are checked, written and given that password; every
+ *    other demo account (and its existing password) is left untouched.
  *
  * USAGE
  *   SUPABASE_URL=https://<ref>.supabase.co SUPABASE_SERVICE_ROLE_KEY=<secret> \
  *   node scripts/provision-demo-students.mjs --dry-run  # read-only checks
+ *   node scripts/provision-demo-students.mjs --only CS006 --dry-run
+ *   node scripts/provision-demo-students.mjs --only CS006   # just CS006; CS001–CS005
+ *                                                          # and their password untouched
  *   node scripts/provision-demo-students.mjs            # create / rotate password
  *   node scripts/provision-demo-students.mjs --delete   # remove the demo accounts
  */
@@ -39,7 +47,8 @@ import {
   findAuthUserByEmail, upsertProfileRow,
 } from './lib/profileSchema.mjs';
 
-const args = new Set(process.argv.slice(2));
+const argv = process.argv.slice(2);
+const args = new Set(argv);
 const DRY_RUN = args.has('--dry-run');
 const DELETE = args.has('--delete');
 
@@ -58,6 +67,18 @@ if (/^sb_publishable_/.test(serviceKey)) {
   fail('SUPABASE_SERVICE_ROLE_KEY holds a publishable key. Use the secret (service-role) key.');
 }
 
+// --only CS006[,CS00x] (or --only=CS006): restrict the run to these demo accounts.
+const onlyArg = (() => {
+  const i = argv.findIndex((a) => a === '--only' || a.startsWith('--only='));
+  if (i === -1) return null;
+  const raw = argv[i].includes('=') ? argv[i].split('=')[1] : argv[i + 1];
+  if (!raw || raw.startsWith('--')) fail('--only needs one or more Student IDs, e.g. --only CS006');
+  return raw.split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+})();
+const unknownOnly = (onlyArg || []).filter((usn) => !DEMO_STUDENTS.some((s) => s.usn === usn));
+if (unknownOnly.length) fail(`--only: not a demo account: ${unknownOnly.join(', ')}`);
+const TARGETS = onlyArg ? DEMO_STUDENTS.filter((s) => onlyArg.includes(s.usn)) : DEMO_STUDENTS;
+
 const password = process.env.DEMO_TEMP_PASSWORD || `Demo#7${randomBytes(18).toString('base64url')}`;
 if (!DELETE && password.length < 12) fail('DEMO_TEMP_PASSWORD must be at least 12 characters.');
 
@@ -68,7 +89,7 @@ async function preflight() {
   const institutionId = await drAitInstitutionId(supabase, schema);
   const plans = [];
   const conflicts = [];
-  for (const student of DEMO_STUDENTS) {
+  for (const student of TARGETS) {
     const check = await checkDemoAccount(supabase, schema, { email: student.email, identifierColumn: 'usn', identifier: student.usn });
     if (check.conflicts.length) conflicts.push(...check.conflicts.map((c) => `${student.usn}: ${c}`));
     const demoUser = check.existing?.app_metadata?.examsphere_demo === true ? check.existing : null;
@@ -122,7 +143,7 @@ async function provision() {
 
 async function remove() {
   const rows = [];
-  for (const student of DEMO_STUDENTS) {
+  for (const student of TARGETS) {
     const existing = await findAuthUserByEmail(supabase, student.email);
     if (!existing) { rows.push({ student, result: 'not found' }); continue; }
     if (existing.app_metadata?.examsphere_demo !== true) {
@@ -140,14 +161,15 @@ async function remove() {
 
 try {
   const out = DELETE ? await remove() : await provision();
-  console.log(`\nExamSphere demo accounts — ${DELETE ? 'delete' : 'provision'}${DRY_RUN ? ' (dry run: read-only, nothing written)' : ''}\n`);
+  console.log(`\nExamSphere demo accounts — ${DELETE ? 'delete' : 'provision'}${DRY_RUN ? ' (dry run: read-only, nothing written)' : ''}`);
+  console.log(onlyArg ? `Scope: ${TARGETS.map((s) => s.usn).join(', ')} only — other demo accounts are not checked or changed.\n` : `Scope: all ${TARGETS.length} demo accounts.\n`);
   if (out.schema) {
     console.log(describeSchema(out.schema));
     console.log(`Dr. AIT institution link: ${out.institutionId ? 'yes' : 'no (institutions table or profiles.institution_id not present)'}\n`);
   }
   console.table(out.rows.map((r) => ({ 'Student ID': r.student.usn, Name: r.student.name, Email: r.student.email, Pattern: r.student.pattern, Result: r.result })));
   if (!DELETE && !DRY_RUN) {
-    console.log('\nTemporary password (shown once, shared by all five demo accounts):\n');
+    console.log(`\nTemporary password (shown once${TARGETS.length > 1 ? `, shared by ${TARGETS.map((s) => s.usn).join(', ')}` : ` for ${TARGETS[0].usn}`}):\n`);
     console.log(`    ${password}\n`);
     console.log('Share it only with the demo presenter over a secure channel. Re-run this script to rotate it,');
     console.log('and run with --delete after the demo. Do not store it in the repository or in chat.\n');

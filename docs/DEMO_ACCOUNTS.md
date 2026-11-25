@@ -1,6 +1,8 @@
-# Demo CS student accounts: question-paper randomisation
+# Demo CS student accounts
 
-Five ordinary student accounts used to show, live, that every candidate gets the **same 25 questions** in a **different order** with **independently shuffled options**.
+Six ordinary student accounts:
+- **CS001–CS005:** show, live, that every candidate gets the **same 25 questions** in a **different order** with **independently shuffled options**.
+- **CS006:** the dedicated account for walking through how one student takes an examination end to end (see §5).
 
 | Name | Student ID (login) | Branch | Sign-in email | Assigned pattern | Paper code |
 |---|---|---|---|---|---|
@@ -9,6 +11,7 @@ Five ordinary student accounts used to show, live, that every candidate gets the
 | CS Demo 03 | `CS003` | CSE | cs003@drait.edu.in | C | 22CS601-C |
 | CS Demo 04 | `CS004` | CSE | cs004@drait.edu.in | D | 22CS601-D |
 | CS Demo 05 | `CS005` | CSE | cs005@drait.edu.in | E | 22CS601-E |
+| CS Demo 06 | `CS006` | CSE | cs006@drait.edu.in | F | 22CS601-F (exam walkthrough) |
 
 The source of truth for this table is `src/data/demoAccounts.js`.
 
@@ -17,7 +20,7 @@ The source of truth for this table is `src/data/demoAccounts.js`.
 - **Sign-in** goes through the normal ExamSphere login: Student tab → Student ID → `resolve_login_identifier` → Supabase `signInWithPassword` → verified `profiles` row (`role = student`, `usn = CS00x`). Nothing is bypassed.
 - **Exam and grading** use the existing ten patterns, the existing attempt snapshot and the existing grading code (`examRandomizerService`). Nothing is duplicated.
 - **The only addition is an explicit pattern assignment.** `src/utils/patternAssignment.js` gives CS001…CS005 patterns A…E. Every other student keeps the existing USN-hash assignment. Because the assignment is fixed per account, a refresh, sign-out/sign-in or new browser tab always gives the same pattern. In the Supabase exam design this is `exam_assignments.pattern_id`.
-- **Admin view.** On **Admin → Candidates**, the five accounts carry a **Demo** badge and can be filtered with *All eligibility → Demo accounts*. **Reset demo attempts** clears attempts for these five accounts only, so the demo can be rehearsed and run again. It refuses any non-demo ID.
+- **Admin view.** On **Admin → Candidates**, the six accounts carry a **Demo** badge and can be filtered with *All eligibility → Demo accounts*. **Reset demo attempts** clears attempts for these demo accounts only, so the demo can be rehearsed and run again. It refuses any non-demo ID.
 
 ## 1. Provision the accounts in Supabase (one-time, operator machine)
 
@@ -49,12 +52,12 @@ node scripts/provision-demo-students.mjs
 What the script does:
 - **Creates the users.** It uses the supported Admin API (`auth.admin.createUser`) with `email_confirm: true`, so no email is sent, and tags each user `app_metadata.examsphere_demo = true`.
 - **Sets the profile.** Each profile gets `role = student`, `usn = CS00x`, the name and the email.
-- **Protects real accounts.** It refuses to modify **anything** if one of the five emails or IDs already belongs to a non-demo account. It checks all five before any write.
+- **Protects real accounts.** It refuses to modify **anything** if one of the emails or IDs it is processing already belongs to a non-demo account. It checks every account in the run before any write.
 - **Is safe to re-run.** Re-running rotates the password of the existing demo accounts and creates no duplicates.
 
 ### Temporary credentials: secure handling
 
-- **One password, shown once.** The script generates a strong temporary password (or uses `DEMO_TEMP_PASSWORD` if you set it, minimum 12 characters). It prints it **once** in the operator's terminal and shares it across the five demo accounts.
+- **One password, shown once.** The script generates a strong temporary password (or uses `DEMO_TEMP_PASSWORD` if you set it, minimum 12 characters). It prints it **once** in the operator's terminal and shares it across the accounts processed in that run. **A full run rotates the password of every demo account it processes**, so use `--only` to add CS006 without touching CS001–CS005 (§5).
 - **Never stored.** The password is **not** in the repository, the app bundle, any student-facing page or any log. Do not commit it, paste it into chat or tickets, or put it in a `VITE_*` variable.
 - **Distribution.** Give it only to the demo presenter, in person or through the institution's password manager or another encrypted channel.
 - **Rotation.** Re-run the script before each demo to rotate it, and run `--delete` afterwards (see step 4).
@@ -103,3 +106,61 @@ node scripts/provision-demo-students.mjs --delete
 ```
 
 This deletes only users tagged `examsphere_demo = true`. If your `profiles.id` foreign key cascades (as in the reconstructed baseline `001`), their profiles go too. Otherwise, delete the five `profiles` rows with `usn` in CS001–CS005. To remove the demo candidates from the local roster, use **Admin → Candidates → remove**; they are not re-added.
+
+## 5. CS006: dedicated exam-walkthrough account
+
+| Field | Value |
+|---|---|
+| Name | CS Demo 06 |
+| Login ID | `CS006` (Student Login; any case) |
+| Sign-in email | cs006@drait.edu.in |
+| Branch / role | CSE · student |
+| Institution | Dr. Ambedkar Institute of Technology |
+| Examination | 22CS601 Software Engineering & Cloud Architecture (the existing demo examination) |
+| Pattern | **F**: paper `22CS601-F`. CS001–CS005 keep A–E. On a published subject examination CS006 also gets pattern F. |
+
+- **Ordinary account.** CS006 is an ordinary student account with an explicit pattern assignment (`src/data/demoAccounts.js`). There is no special login path, and grading is the normal pattern-F answer key.
+- **Roster.** Browsers that already hold CS001–CS005 gain CS006 on the next load; existing entries are unchanged.
+
+### Provision only CS006 (operator machine)
+
+Use `--only CS006` so that CS001–CS005 are **not** checked, changed or given a new password:
+
+```bash
+node scripts/provision-demo-students.mjs --only CS006 --dry-run
+```
+
+```bash
+node scripts/provision-demo-students.mjs --only CS006
+```
+
+```bash
+unset SUPABASE_SERVICE_ROLE_KEY
+```
+
+- **Dry run.** It shows the detected `profiles` columns and `Scope: CS006 only`, then *would create* (or the conflicts, ending with *Nothing was changed*).
+- **Real run.** It creates the user tagged `examsphere_demo`, sets the profile (`role = student`, `usn = CS006`, name; `email`/`institution_id` only if those columns exist) and prints **CS006's own temporary password once**.
+- **Re-running** rotates only CS006's password and never creates a duplicate.
+- **Cleanup:** `node scripts/provision-demo-students.mjs --only CS006 --delete`.
+
+### Walkthrough script
+
+1. **Student Login** → `CS006` + temporary password. The dashboard shows *CS Demo 06 · CS006* and **Paper 22CS601-F**.
+2. **My Examinations:** 22CS601 is *Open now*. **Instructions & venue** shows the instructions and venue.
+3. **Start examination.** The instructions screen appears first; *Start* is disabled until you tick the acknowledgement.
+4. **The paper** opens as *Pattern F*, with its own question order and option order.
+5. **Navigate:**
+   - *Save & next* and *Previous*;
+   - the **Questions** palette (jump to any question);
+   - keyboard: `A`–`D` select an option, `N`/`P` move, `M` marks.
+6. **Answers:** select an option, then click another to change it. *Clear response* removes the answer.
+7. **Review:** *Mark for review & next* marks a question; *Unmark* (or `M`) undoes it. Answered-and-marked questions are still evaluated.
+8. **Status:** the palette shows *Answered*, *Not answered*, *Not visited*, *Marked* and *Answered & marked* counts. A refresh, or sign-out and sign-in, keeps the same pattern and answers.
+9. **Submit examination** shows a summary (answered, not answered, not visited, marked). **Submit answer sheet** shows *Answer sheet submitted successfully* with paper `22CS601-F` and a reference number.
+10. **Results** follow the super admin's *Result display* setting (Super Admin → Settings):
+    - **Immediate:** the provisional score appears on the confirmation and in *Results & History*.
+    - **Withheld:** the student sees only that the answer sheet was recorded.
+11. **Admin view:** *Results & Reports* lists CS006 on `22CS601-F` with the same score. A second attempt is blocked.
+12. **To run the walkthrough again:** Admin → Candidates → **Reset demo attempts**. This clears demo accounts only; patterns are unchanged.
+
+**Students never see an answer key or correct answers.** In this browser-local build the key is still in browser storage (see the security note in §3); applying the Supabase exam migrations removes that.

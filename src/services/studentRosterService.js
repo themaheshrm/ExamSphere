@@ -3,7 +3,8 @@ import { INSTITUTION } from '../utils/constants.js';
 import { DEMO_STUDENTS, isDemoStudent } from '../data/demoAccounts.js';
 
 const KEY = 'examsphere_candidate_roster_v1';
-const DEMO_SEEDED_KEY = 'examsphere_demo_candidates_added_v1';
+const DEMO_SEEDED_KEY = 'examsphere_demo_candidates_added_v1'; // legacy: true once CS001–CS005 were added
+const DEMO_ADDED_KEY = 'examsphere_demo_candidates_added_v2';  // list of demo USNs already added
 // Dr. AIT USNs always carry the VTU college code 1DA (e.g. 1DA22CS001).
 export const USN_PATTERN = new RegExp(`^${INSTITUTION.code}\\d{2}[A-Z]{2,3}\\d{3}$`);
 
@@ -36,15 +37,24 @@ const DEMO_CANDIDATES = DEMO_STUDENTS.map((d) => ({
 }));
 
 /**
- * Adds the five demo candidates once (append-only; existing entries are never
- * changed). If an admin later removes a demo candidate it stays removed.
+ * Adds each demo candidate once (append-only; existing entries are never
+ * changed). Tracked per USN, so a newly introduced demo account (CS006) is
+ * added to rosters that already have CS001–CS005, while a demo candidate an
+ * admin removed stays removed.
  */
 function withDemoCandidates(roster) {
-  if (readJson(DEMO_SEEDED_KEY, false)) return roster;
+  const legacy = readJson(DEMO_SEEDED_KEY, false) ? ['CS001', 'CS002', 'CS003', 'CS004', 'CS005'] : [];
+  const stored = readJson(DEMO_ADDED_KEY, null);
+  const added = new Set(Array.isArray(stored) ? stored : legacy);
+  const pending = DEMO_CANDIDATES.filter((d) => !added.has(d.usn));
+  if (!pending.length) {
+    if (!Array.isArray(stored)) writeJson(DEMO_ADDED_KEY, [...added]);
+    return roster;
+  }
   const present = new Set(roster.map((s) => s.usn));
-  const next = [...roster, ...DEMO_CANDIDATES.filter((d) => !present.has(d.usn)).map((d) => ({ ...d }))];
+  const next = [...roster, ...pending.filter((d) => !present.has(d.usn)).map((d) => ({ ...d }))];
   writeJson(KEY, next);
-  writeJson(DEMO_SEEDED_KEY, true);
+  writeJson(DEMO_ADDED_KEY, [...added, ...pending.map((d) => d.usn)]);
   return next;
 }
 

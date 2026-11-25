@@ -55,7 +55,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
     try {
       const removed = service.resetDemoAttempts(demoUsns);
       log('Reset demo attempts', `${demoUsns.length} demo account(s)`, `${removed} attempt(s) cleared`);
-      notify(`Demo attempts reset (${removed} cleared). Patterns stay assigned A–E.`);
+      notify(`Demo attempts reset (${removed} cleared). Assigned patterns do not change.`);
       setAttemptsVersion((v) => v + 1);
     } catch (error) {
       notify(error.message, 'error');
