@@ -15,6 +15,7 @@ import {
   UserCircle,
   Users,
   UserCog,
+  ShieldCheck,
 } from 'lucide-react';
 
 export const USER_ROLES = {
@@ -59,6 +60,7 @@ export const NAVIGATION_CONFIG = {
         items: [
           { label: 'Overview', path: '/super-admin', icon: LayoutDashboard },
           { label: 'Institution Profile', path: '/super-admin/organizations', icon: Building2 },
+          { label: 'Admin Management', path: '/super-admin/admins', icon: ShieldCheck },
           { label: 'Staff Accounts', path: '/super-admin/users', icon: UserCog },
           { label: 'System Monitoring', path: '/super-admin/monitoring', icon: Activity },
           { label: 'Activity Logs', path: '/super-admin/activity', icon: ScrollText },

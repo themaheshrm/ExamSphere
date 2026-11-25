@@ -32,6 +32,9 @@ export function buildUserObject(authUser, profile, role, accessToken = null) {
     scopeSignals: {
       staffIds: [profile.staff_id, signedStaffId].filter(Boolean),
       emails: [claims?.email, authUser.email].filter(Boolean),
+      // Server-managed assignment (manage-admins), from the signed token only.
+      adminType: claims?.app_metadata?.admin_type || null,
+      subjectCode: claims?.app_metadata?.subject_code || null,
     },
   };
 }

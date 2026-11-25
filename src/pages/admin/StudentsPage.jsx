@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Ban, CheckCircle2, Copy, Download, Edit3, Plus, RotateCcw, Search, Trash2, UserPlus, Users } from 'lucide-react';
+import { Ban, CheckCircle2, Download, Edit3, Plus, RotateCcw, Search, Trash2, UserPlus, Users } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
 import InputField from '../../components/common/InputField';
@@ -15,6 +15,7 @@ import { useToast } from '../../components/common/Toast';
 import { studentRosterService } from '../../services/studentRosterService';
 import { studentAccountService } from '../../services/studentAccountService';
 import Alert from '../../components/common/Alert';
+import CredentialsDialog from '../../components/common/CredentialsDialog';
 import { useAdminExamContext } from '../../utils/useAdminExamContext';
 import { ExamSwitcher, ExamNotCreated, ScopeDenied } from '../../components/admin/ExamScope';
 import { activityLogService } from '../../services/activityLogService';
@@ -44,7 +45,6 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
   // One-time credentials of the account just created. Held only in this
   // component's memory; cleared when the dialog closes; never persisted.
   const [credentials, setCredentials] = useState(null);
-  const [copied, setCopied] = useState(false);
   const [removeTarget, setRemoveTarget] = useState(null);
   const [withholdOpen, setWithholdOpen] = useState(false);
   const [withholdReason, setWithholdReason] = useState('');
@@ -103,7 +103,6 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
       studentRosterService.save(existing ? { ...existing, ...entry, status: existing.status, remarks: existing.remarks } : entry, existing ? existing.usn : null);
       log('Created student account', student.usn, `${student.name} · login ${student.email}`);
       setEditing(null);
-      setCopied(false);
       setCredentials(issued);
       refresh();
     } catch (error) {
@@ -121,16 +120,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
     `Sign in: ${window.location.origin}/login → Student Login. You will be asked to set a new password.`,
   ].join('\n') : '';
 
-  const copyCredentials = async () => {
-    try {
-      await navigator.clipboard.writeText(credentialsText);
-      setCopied(true);
-    } catch {
-      notify('Copy failed. Select the details and copy them manually.', 'warning');
-    }
-  };
-
-  const closeCredentials = () => { setCredentials(null); setCopied(false); };
+  const closeCredentials = () => setCredentials(null);
 
   const saveCandidate = (event) => {
     event.preventDefault();
@@ -331,34 +321,13 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
         </form>
       </Modal>
 
-      <Modal
-        isOpen={Boolean(credentials)}
-        onClose={closeCredentials}
+      <CredentialsDialog
+        credentials={credentials}
         title="Student account created"
-        maxWidth="max-w-md"
-        footer={(
-          <>
-            <Button variant="secondary" icon={Copy} onClick={copyCredentials}>{copied ? 'Copied' : 'Copy credentials'}</Button>
-            <Button onClick={closeCredentials}>Done</Button>
-          </>
-        )}
-      >
-        {credentials && (
-          <div className="space-y-4">
-            <dl className="divide-y divide-slate-100 rounded-sm border border-slate-200 text-sm" aria-label="Sign-in details">
-              {[['Student ID', credentials.studentId], ['Email', credentials.email], ['Temporary Password', credentials.temporaryPassword]].map(([k, v]) => (
-                <div key={k} className="flex items-center justify-between gap-4 px-4 py-3">
-                  <dt className="text-xs text-slate-500">{k}</dt>
-                  <dd className="select-all break-all text-right font-mono font-semibold text-slate-900" data-credential={k}>{v}</dd>
-                </div>
-              ))}
-            </dl>
-            <Alert tone="warning" title="Shown once">
-              The password is not stored and cannot be shown again. The student must change it at first sign-in.
-            </Alert>
-          </div>
-        )}
-      </Modal>
+        rows={credentials ? [['Student ID', credentials.studentId], ['Email', credentials.email], ['Temporary Password', credentials.temporaryPassword]] : []}
+        copyText={credentialsText}
+        onClose={closeCredentials}
+      />
 
       <Modal
         isOpen={withholdOpen}

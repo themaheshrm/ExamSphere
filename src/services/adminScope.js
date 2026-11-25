@@ -30,14 +30,26 @@ function matchedSubjectAdmins(user) {
   return [...new Map(matches.map((a) => [a.staffId, a])).values()];
 }
 
+const subjectScope = (subject) => ({ scoped: true, subjectCodes: [subject.code], canManageInstitution: false, label: `${subject.code} · ${subject.title}` });
+
 export function getAdminScope(user) {
   if (!user || (user.role !== USER_ROLES.ADMIN && user.role !== USER_ROLES.SUPER_ADMIN)) return NO_ACCESS;
+  // 1. Assignment set by the super admin (signed app_metadata) is authoritative.
+  const signed = user.scopeSignals || {};
+  if (user.role === USER_ROLES.ADMIN && signed.subjectCode) {
+    const subject = subjectByCode(signed.subjectCode);
+    return subject ? subjectScope(subject) : NO_ACCESS; // unknown subject: deny
+  }
+  if (user.role === USER_ROLES.ADMIN && signed.adminType === 'subject') return NO_ACCESS; // subject admin without a subject
+  if (user.role === USER_ROLES.ADMIN && signed.adminType === 'institution') {
+    return { scoped: false, subjectCodes: SUBJECTS.map((s) => s.code), canManageInstitution: true, label: 'All subjects' };
+  }
+  // 2. Otherwise the demo registry (ADMIN001–005), fail-closed.
   const matches = matchedSubjectAdmins(user);
   if (matches.length > 1) return NO_ACCESS; // conflicting identities: deny rather than guess
   if (matches.length === 1) {
     // Any role carrying a subject-admin identity is held to that subject.
-    const subject = subjectByCode(matches[0].subjectCode);
-    return { scoped: true, subjectCodes: [subject.code], canManageInstitution: false, label: `${subject.code} · ${subject.title}` };
+    return subjectScope(subjectByCode(matches[0].subjectCode));
   }
   return { scoped: false, subjectCodes: SUBJECTS.map((s) => s.code), canManageInstitution: true, label: 'All subjects' };
 }

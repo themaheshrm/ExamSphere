@@ -125,7 +125,7 @@ export function validateStudentInput(input) {
 }
 
 // ─── Authorisation ───────────────────────────────────────────────────────────
-async function tableExists(admin, table, column) {
+export async function tableExists(admin, table, column) {
   const { error } = await admin.from(table).select(column).limit(0);
   if (!error) return true;
   if (isMissingTable(error) || isMissingColumn(error)) return false;
@@ -144,15 +144,19 @@ export async function authorizeCaller(admin, schema, callerUser) {
   // Subject administrators manage one subject; the student roster stays with the institution admin.
   const staffIds = [profile.staff_id, callerUser.app_metadata?.staff_id].filter(Boolean).map((s) => String(s).toUpperCase());
   const email = String(callerUser.email || '').toLowerCase();
-  const demoScoped = staffIds.some((s) => DEMO_ADMIN_IDS.includes(s))
-    || DEMO_ADMIN_IDS.some((id) => email === `${id.toLowerCase()}@${EMAIL_DOMAIN}`);
+  const md = callerUser.app_metadata || {};
+  // Signed, server-managed assignment (manage-admins) wins; otherwise the demo registry applies.
+  const signedScoped = Boolean(md.subject_code) || md.admin_type === 'subject';
+  const signedInstitution = md.admin_type === 'institution' && !md.subject_code;
+  const demoScoped = !signedInstitution && (staffIds.some((s) => DEMO_ADMIN_IDS.includes(s))
+    || DEMO_ADMIN_IDS.some((id) => email === `${id.toLowerCase()}@${EMAIL_DOMAIN}`));
   let tableScoped = false;
   if (await tableExists(admin, 'subject_admins', 'admin_id')) {
     const { data, error } = await admin.from('subject_admins').select('admin_id').eq('admin_id', callerUser.id).limit(1);
     if (error) throw new Error(`Could not read subject_admins: ${error.message}`);
     tableScoped = (data || []).length > 0;
   }
-  if (profile.role === 'admin' && (demoScoped || tableScoped)) {
+  if (profile.role === 'admin' && (signedScoped || demoScoped || tableScoped)) {
     throw new HttpError(403, 'Subject administrators cannot create student accounts. Ask the institution administrator.');
   }
   return profile;
@@ -283,7 +287,7 @@ function respond(request, allowedOrigins, status, body) {
   });
 }
 
-async function authenticatedCall(request, { admin, allowedOrigins = [], log = () => {} }, action) {
+export async function authenticatedCall(request, { admin, allowedOrigins = [], log = () => {} }, action) {
   if (request.method === 'OPTIONS') return respond(request, allowedOrigins, 204);
   if (request.method !== 'POST') return respond(request, allowedOrigins, 405, { error: 'Method not allowed.' });
   try {

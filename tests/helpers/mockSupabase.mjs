@@ -30,6 +30,8 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
   };
   const bearer = (req) => (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   const isAdminCall = (req) => !serviceKey || bearer(req) === serviceKey;
+  const isBanned = (u) => Boolean(u.banned_until) && new Date(u.banned_until).getTime() > Date.now();
+  const banUntil = (d) => (d === 'none' ? null : d ? new Date(Date.now() + Number.parseInt(d, 10) * 3600 * 1000).toISOString() : undefined);
   const missingColumn = (res, table, col) => send(res, 400, { code: '42703', message: `column ${table}.${col} does not exist`, details: null, hint: null });
   const unknownBodyColumn = (res, table, col) => send(res, 400, { code: 'PGRST204', message: `Could not find the '${col}' column of '${table}' in the schema cache`, details: null, hint: null });
 
@@ -85,11 +87,13 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
       if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'password') {
         const user = state.users.find((u) => u.email === String(body?.email || '').toLowerCase());
         if (!user || user.password !== body?.password) return send(res, 400, { error: 'invalid_grant', error_description: 'Invalid login credentials', code: 'invalid_credentials', msg: 'Invalid login credentials' });
+        if (isBanned(user)) return send(res, 400, { error: 'invalid_grant', error_description: 'User is banned', code: 'user_banned', msg: 'User is banned' });
+        user.last_sign_in_at = new Date().toISOString();
         return send(res, 200, issueSession(user));
       }
       if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'refresh_token') {
         const user = state.users.find((u) => u.id === state.refresh.get(body?.refresh_token));
-        if (!user) return send(res, 400, { error: 'invalid_grant', error_description: 'Invalid Refresh Token' });
+        if (!user || isBanned(user)) return send(res, 400, { error: 'invalid_grant', error_description: 'Invalid Refresh Token' });
         state.refresh.delete(body.refresh_token);
         return send(res, 200, issueSession(user));
       }
@@ -104,7 +108,7 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
       if (url.pathname === '/auth/v1/admin/users' && req.method === 'GET') return send(res, 200, { users: state.users.map(publicUser), aud: 'authenticated' });
       if (url.pathname === '/auth/v1/admin/users' && req.method === 'POST') {
         if (state.users.some((u) => u.email === body.email)) return send(res, 422, { code: 'email_exists', msg: 'A user with this email address has already been registered' });
-        const user = { id: randomUUID(), email: body.email, app_metadata: body.app_metadata || {}, user_metadata: body.user_metadata || {}, password: body.password };
+        const user = { id: randomUUID(), email: body.email, app_metadata: body.app_metadata || {}, user_metadata: body.user_metadata || {}, password: body.password, ...(body.ban_duration ? { banned_until: banUntil(body.ban_duration) } : {}) };
         state.users.push(user);
         if (signupTrigger) triggerProfile(user);
         return send(res, 200, publicUser(user));
@@ -114,7 +118,11 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
         const user = state.users.find((u) => u.id === m[1]);
         if (!user) return send(res, 404, { msg: 'User not found' });
         if (req.method === 'GET') return send(res, 200, publicUser(user));
-        if (req.method === 'PUT') { Object.assign(user, { app_metadata: body.app_metadata ?? user.app_metadata, password: body.password ?? user.password, rotated: true }); return send(res, 200, publicUser(user)); }
+        if (req.method === 'PUT') {
+          Object.assign(user, { app_metadata: body.app_metadata ?? user.app_metadata, password: body.password ?? user.password, rotated: true });
+          if (body.ban_duration !== undefined) user.banned_until = banUntil(body.ban_duration);
+          return send(res, 200, publicUser(user));
+        }
         if (req.method === 'DELETE') {
           state.users = state.users.filter((u) => u.id !== user.id);
           if (state.tables.profiles) state.tables.profiles.rows = state.tables.profiles.rows.filter((r) => r.id !== user.id);

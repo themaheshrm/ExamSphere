@@ -18,6 +18,7 @@ const SuperAdminDashboard = lazy(() => import('../pages/super-admin/SuperAdminDa
 const InstitutionProfilePage = lazy(() => import('../pages/super-admin/InstitutionProfilePage'));
 const SystemSettingsPage = lazy(() => import('../pages/super-admin/SystemSettingsPage'));
 const UsersPage = lazy(() => import('../pages/super-admin/UsersPage'));
+const AdminManagementPage = lazy(() => import('../pages/super-admin/AdminManagementPage'));
 const MonitoringPage = lazy(() => import('../pages/super-admin/MonitoringPage'));
 const ActivityLogPage = lazy(() => import('../pages/super-admin/ActivityLogPage'));
 const StudentDashboard = lazy(() => import('../pages/student/StudentDashboard'));
@@ -111,6 +112,7 @@ export default function AppRoutes() {
               path="super-admin/settings"
               element={<SystemSettingsPage />}
             />
+            <Route path="super-admin/admins" element={<AdminManagementPage />} />
             <Route path="super-admin/users" element={<UsersPage />} />
             <Route path="super-admin/monitoring" element={<MonitoringPage />} />
             <Route path="super-admin/activity" element={<ActivityLogPage />} />
