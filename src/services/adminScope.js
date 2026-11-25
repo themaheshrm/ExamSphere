@@ -1,5 +1,5 @@
 import { SUBJECTS, subjectByCode, subjectForQuestion } from '../data/subjectCatalog.js';
-import { demoAdmin } from '../data/demoAdmins.js';
+import { demoAdmin, demoAdminByEmail } from '../data/demoAdmins.js';
 import { USER_ROLES } from '../utils/constants.js';
 
 /** The institution-wide examination that predates subject scoping. */
@@ -15,13 +15,28 @@ export const DEFAULT_EXAM_CODE = '22CS601';
  *
  * Returns { scoped, subjectCodes, canManageInstitution, label }.
  */
+const NO_ACCESS = { scoped: true, subjectCodes: [], canManageInstitution: false, label: 'No access' };
+
+/**
+ * Subject-admin identities matched by ANY signal: profiles.staff_id, the
+ * signed app_metadata.staff_id, or the verified sign-in email. Works when the
+ * live profiles table has no staff_id column. Fail-closed: matching more
+ * signals can only restrict, never widen, access.
+ */
+function matchedSubjectAdmins(user) {
+  const staffIds = [user.staffId, ...(user.scopeSignals?.staffIds || [])];
+  const emails = [user.email, ...(user.scopeSignals?.emails || [])];
+  const matches = [...staffIds.map(demoAdmin), ...emails.map(demoAdminByEmail)].filter(Boolean);
+  return [...new Map(matches.map((a) => [a.staffId, a])).values()];
+}
+
 export function getAdminScope(user) {
-  if (!user || (user.role !== USER_ROLES.ADMIN && user.role !== USER_ROLES.SUPER_ADMIN)) {
-    return { scoped: true, subjectCodes: [], canManageInstitution: false, label: 'No access' };
-  }
-  const assigned = user.role === USER_ROLES.ADMIN ? demoAdmin(user.staffId) : null;
-  if (assigned) {
-    const subject = subjectByCode(assigned.subjectCode);
+  if (!user || (user.role !== USER_ROLES.ADMIN && user.role !== USER_ROLES.SUPER_ADMIN)) return NO_ACCESS;
+  const matches = matchedSubjectAdmins(user);
+  if (matches.length > 1) return NO_ACCESS; // conflicting identities: deny rather than guess
+  if (matches.length === 1) {
+    // Any role carrying a subject-admin identity is held to that subject.
+    const subject = subjectByCode(matches[0].subjectCode);
     return { scoped: true, subjectCodes: [subject.code], canManageInstitution: false, label: `${subject.code} · ${subject.title}` };
   }
   return { scoped: false, subjectCodes: SUBJECTS.map((s) => s.code), canManageInstitution: true, label: 'All subjects' };

@@ -21,7 +21,12 @@ The source of truth for this table is `src/data/demoAccounts.js`.
 
 ## 1. Provision the accounts in Supabase (one-time, operator machine)
 
-**Prerequisites.** The live project has the baseline `profiles` table and migrations `003` and `004` (already required by the current login). No new migration is needed. The script also works if `005`+ are applied later: it then links the accounts to the Dr. AIT `institutions` row (`code = '1DA'`), which must exist.
+**Prerequisites.**
+- **Required columns.** The baseline `profiles` table with `id`, `role`, `full_name` and `usn`. `email`, `staff_id` and `institution_id` are written only if they exist.
+- **No migrations needed.** Migrations 003/004 are not needed and are not applied on the live project. Login uses the `cs00x@drait.edu.in` fallback.
+- **Institution link.** If `005`+ are applied later, the script links the accounts to the Dr. AIT `institutions` row (`code = '1DA'`), which must exist.
+- **Read-only first.** `--dry-run` performs the real read-only schema and duplicate checks and writes nothing.
+- **Repair.** If an earlier run created a demo user but failed on its profile, re-running repairs it without creating a duplicate.
 
 Run from the repository root, on a trusted machine:
 

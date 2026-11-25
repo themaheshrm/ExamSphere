@@ -9,7 +9,7 @@ supabase/
 ├── discovery/000_preflight_discovery.sql        read-only; run on live first
 ├── migrations/
 │   ├── 001_baseline_reconstruction.sql          replaces the missing 001/002 (idempotent)
-│   ├── 003_… / 004_…                            existing, unchanged
+│   ├── 003_… / 004_…                            in the repo, NOT applied on live (see §0)
 │   ├── 005_tenancy_and_access_control.sql
 │   ├── 006_question_bank.sql
 │   ├── 007_exams_and_patterns.sql
@@ -28,7 +28,7 @@ supabase/
 ExamSphere is deployed **exclusively for Dr. Ambedkar Institute of Technology (college code `1DA`)**. The application UI has no institution selection, registration or switching; Super Admin sees a read-only Dr. AIT *Institution Profile*.
 
 The schema below still carries `institution_id` and the tenancy design. **Migrations were deliberately left unchanged** because `institution_id` is a dependency of:
-- the already-applied migrations 003 and 004 (`admin_provision_user(p_institution_id …)`);
+- migrations 003 and 004 (`admin_provision_user(p_institution_id …)`). **Correction:** these were assumed to be applied on live, but provisioning showed `profiles.staff_id` does not exist there, so 003/004 are **not** applied. The provisioning scripts detect the live columns read-only and use only existing ones; apply 003/004 only after review;
 - `authService.buildUserObject` (`profiles.institution_id`);
 - the composite foreign keys and row-level security in 005–010.
 
@@ -284,7 +284,7 @@ sequenceDiagram
 | 0 | `supabase/discovery/000_preflight_discovery.sql` | **Read-only.** Send me the output: it reveals the real 001/002, policy names, duplicate USNs/emails, orphan `institution_id`s and whether pg_cron is on. |
 | 1 | Back up | `supabase db dump` (schema + data) or a PITR checkpoint. |
 | 2 | 001/002 | Preferably `supabase db pull` → commit the real baseline. Otherwise `supabase/migrations/001_baseline_reconstruction.sql` (a no-op on live, builds fresh projects). |
-| 3 | 003, 004 | Already applied on live; unchanged; needed for fresh replays. |
+| 3 | 003, 004 | **Not applied on live** (no `profiles.staff_id`). Review and apply before 005. Until then, login uses the `<id>@drait.edu.in` fallback and admin Login IDs live in Auth `app_metadata`. |
 | 4 | Seed | Insert the Dr. AIT `institutions` row (`1DA`) and departments, then backfill `profiles.institution_id` and `department_id`. **This must happen before 005 if any profile has an `institution_id` that doesn't exist**, or the new FK will fail. Step 0 shows this. |
 | 5 | 005 → 011 | In order, each in its own transaction (Supabase CLI does this). All idempotent. 011 is only needed for subject-scoped admins (§11). |
 | 6 | pg_cron | Enable it in Dashboard → Extensions, then re-run section 5 of 010. |

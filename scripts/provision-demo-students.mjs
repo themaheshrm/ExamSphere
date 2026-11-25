@@ -3,29 +3,41 @@
  * Provision the five ExamSphere demo CS student accounts in Supabase Auth.
  *
  * Uses the supported Admin API (auth.admin.createUser) so the accounts sign
- * in through the normal ExamSphere login (USN → resolve_login_identifier →
- * signInWithPassword → profiles). Nothing in the app is bypassed.
+ * in through the normal ExamSphere login (USN → resolve_login_identifier or
+ * the usn@drait.edu.in fallback → signInWithPassword → profiles). Nothing in
+ * the app is bypassed.
+ *
+ * Schema-aware: the live `profiles` table may not have `email` / `staff_id`
+ * (migrations 003/004). Columns are detected read-only and only existing ones
+ * are written. `profiles.usn` is required (the app identifies students by it);
+ * the script never adds columns or applies migrations.
+ *
+ * SAFETY
+ *  - All five accounts are checked BEFORE the first write; any clash with a
+ *    non-demo account, USN or email aborts with zero changes.
+ *  - Only users tagged app_metadata.examsphere_demo = true are ever updated or
+ *    deleted. Re-running is idempotent and repairs a demo user whose profile
+ *    row is missing (e.g. after an earlier failed run).
+ *  - --dry-run performs the real read-only checks and writes nothing.
  *
  * SECURITY
- *  - Needs the project's service-role key. Run this ONLY on an operator's
- *    machine; never put the key in .env files that Vite bundles (VITE_*),
- *    never commit it, never paste it into chat.
- *  - A strong temporary password is generated (or taken from
- *    DEMO_TEMP_PASSWORD) and printed ONCE to this terminal. It is not stored
- *    anywhere by this script.
- *  - Only accounts tagged app_metadata.examsphere_demo = true are ever
- *    updated or deleted. Existing non-demo users/profiles are never touched.
+ *  - Needs the service-role (secret) key in the environment. Run ONLY on an
+ *    operator's machine; never commit it or paste it into chat. Never printed.
+ *  - One strong temporary password (or DEMO_TEMP_PASSWORD) is printed ONCE.
  *
  * USAGE
- *   SUPABASE_URL=https://<ref>.supabase.co \
- *   SUPABASE_SERVICE_ROLE_KEY=<service-role-key> \
+ *   SUPABASE_URL=https://<ref>.supabase.co SUPABASE_SERVICE_ROLE_KEY=<secret> \
+ *   node scripts/provision-demo-students.mjs --dry-run  # read-only checks
  *   node scripts/provision-demo-students.mjs            # create / rotate password
- *   node scripts/provision-demo-students.mjs --dry-run  # show what would happen
  *   node scripts/provision-demo-students.mjs --delete   # remove the demo accounts
  */
 import { randomBytes } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { DEMO_STUDENTS } from '../src/data/demoAccounts.js';
+import {
+  checkDemoAccount, describeSchema, detectProfileSchema, drAitInstitutionId,
+  findAuthUserByEmail, upsertProfileRow,
+} from './lib/profileSchema.mjs';
 
 const args = new Set(process.argv.slice(2));
 const DRY_RUN = args.has('--dry-run');
@@ -42,131 +54,98 @@ function fail(message) {
 if (!url || !serviceKey) {
   fail('Set SUPABASE_URL (or VITE_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY in the environment.');
 }
-
-function generatePassword() {
-  // 18 random bytes → 24 URL-safe chars, plus a fixed prefix that satisfies
-  // typical upper/lower/digit/symbol policies.
-  return `Demo#7${randomBytes(18).toString('base64url')}`;
+if (/^sb_publishable_/.test(serviceKey)) {
+  fail('SUPABASE_SERVICE_ROLE_KEY holds a publishable key. Use the secret (service-role) key.');
 }
 
-const password = process.env.DEMO_TEMP_PASSWORD || generatePassword();
+const password = process.env.DEMO_TEMP_PASSWORD || `Demo#7${randomBytes(18).toString('base64url')}`;
 if (!DELETE && password.length < 12) fail('DEMO_TEMP_PASSWORD must be at least 12 characters.');
 
 const supabase = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
-async function findUserByEmail(email) {
-  for (let page = 1; page < 50; page += 1) {
-    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
-    if (error) throw new Error(`listUsers failed: ${error.message}`);
-    const hit = data.users.find((u) => (u.email || '').toLowerCase() === email);
-    if (hit) return hit;
-    if (data.users.length < 200) return null;
+async function preflight() {
+  const schema = await detectProfileSchema(supabase, { required: ['usn'] });
+  const institutionId = await drAitInstitutionId(supabase, schema);
+  const plans = [];
+  const conflicts = [];
+  for (const student of DEMO_STUDENTS) {
+    const check = await checkDemoAccount(supabase, schema, { email: student.email, identifierColumn: 'usn', identifier: student.usn });
+    if (check.conflicts.length) conflicts.push(...check.conflicts.map((c) => `${student.usn}: ${c}`));
+    const demoUser = check.existing?.app_metadata?.examsphere_demo === true ? check.existing : null;
+    const action = !demoUser ? 'create'
+      : check.profile ? 'rotate password + refresh profile' : 'rotate password + repair missing profile';
+    plans.push({ student, demoUser, action });
   }
-  return null;
-}
-
-/** Dr. AIT institution id when migration 005 (institutions table) is applied, else null. */
-async function drAitInstitutionId() {
-  const { data, error } = await supabase.from('institutions').select('id').eq('code', '1DA').maybeSingle();
-  if (error) {
-    if (/relation .*institutions.* does not exist|Could not find the table/i.test(error.message)) return null;
-    throw new Error(`Could not read institutions: ${error.message}`);
-  }
-  if (!data) {
-    fail('Table public.institutions exists but has no Dr. AIT row (code 1DA). Seed it first (see docs/DEMO_ACCOUNTS.md).');
-  }
-  return data.id;
-}
-
-async function assertUsnFree(usn, ownUserId) {
-  const { data, error } = await supabase.from('profiles').select('id').ilike('usn', usn);
-  if (error) throw new Error(`Could not check profiles for ${usn}: ${error.message}`);
-  const clash = (data || []).find((p) => p.id !== ownUserId);
-  if (clash) fail(`USN ${usn} already belongs to another (non-demo) profile ${clash.id}. Refusing to continue.`);
-}
-
-async function upsertProfile(userId, student, institutionId) {
-  const fields = { full_name: student.name, usn: student.usn, role: 'student', email: student.email };
-  if (institutionId) fields.institution_id = institutionId;
-  const { data, error } = await supabase.from('profiles').update(fields).eq('id', userId).select('id');
-  if (error) throw new Error(`Profile update failed for ${student.usn}: ${error.message}`);
-  if (data?.length) return;
-  // No signup trigger row: create the profile explicitly.
-  const { error: insertError } = await supabase.from('profiles').insert({ id: userId, ...fields });
-  if (insertError) throw new Error(`Profile insert failed for ${student.usn}: ${insertError.message}`);
+  return { schema, institutionId, plans, conflicts };
 }
 
 async function provision() {
-  // Pre-flight: check every account BEFORE writing anything, so a clash never
-  // leaves the demo set half-provisioned.
-  const existingByUsn = {};
-  for (const student of DEMO_STUDENTS) {
-    const existing = await findUserByEmail(student.email);
-    if (existing && existing.app_metadata?.examsphere_demo !== true) {
-      fail(`${student.email} already exists and is NOT a demo account. Refusing to modify anything.`);
-    }
-    if (!DRY_RUN) await assertUsnFree(student.usn, existing?.id);
-    existingByUsn[student.usn] = existing || null;
+  const pre = await preflight();
+  if (pre.conflicts.length) {
+    fail(`Pre-flight found ${pre.conflicts.length} conflict(s). Nothing was changed:\n  - ${pre.conflicts.join('\n  - ')}`);
   }
+  if (DRY_RUN) return { ...pre, rows: pre.plans.map((p) => ({ ...p, result: `would ${p.action}` })) };
 
-  const institutionId = DRY_RUN ? null : await drAitInstitutionId();
   const rows = [];
-  for (const student of DEMO_STUDENTS) {
-    const existing = existingByUsn[student.usn];
-    if (DRY_RUN) {
-      rows.push({ ...student, action: existing ? 'rotate password + refresh profile' : 'create' });
-      continue;
-    }
+  for (const plan of pre.plans) {
+    const { student, demoUser } = plan;
     const appMetadata = {
       examsphere_demo: true,
       role: 'student',
       usn: student.usn,
       full_name: student.name,
-      ...(institutionId ? { institution_id: institutionId } : {}),
+      ...(pre.institutionId ? { institution_id: pre.institutionId } : {}),
     };
-    let userId = existing?.id;
-    if (existing) {
-      const { error } = await supabase.auth.admin.updateUserById(existing.id, { password, app_metadata: appMetadata });
+    let userId = demoUser?.id;
+    if (demoUser) {
+      const { error } = await supabase.auth.admin.updateUserById(demoUser.id, { password, app_metadata: appMetadata });
       if (error) throw new Error(`Password rotation failed for ${student.email}: ${error.message}`);
     } else {
       const { data, error } = await supabase.auth.admin.createUser({
         email: student.email,
         password,
-        email_confirm: true,           // no confirmation mail is sent
+        email_confirm: true,
         user_metadata: { full_name: student.name },
         app_metadata: appMetadata,
       });
       if (error) throw new Error(`createUser failed for ${student.email}: ${error.message}`);
       userId = data.user.id;
     }
-    await upsertProfile(userId, student, institutionId);
-    rows.push({ ...student, action: existing ? 'password rotated' : 'created' });
+    await upsertProfileRow(supabase, pre.schema, userId, {
+      full_name: student.name, role: 'student', usn: student.usn, email: student.email, staff_id: null,
+      ...(pre.institutionId ? { institution_id: pre.institutionId } : {}),
+    }, student.usn);
+    rows.push({ ...plan, result: demoUser ? 'password rotated' : 'created' });
   }
-  return rows;
+  return { ...pre, rows };
 }
 
 async function remove() {
   const rows = [];
   for (const student of DEMO_STUDENTS) {
-    const existing = await findUserByEmail(student.email);
-    if (!existing) { rows.push({ ...student, action: 'not found' }); continue; }
+    const existing = await findAuthUserByEmail(supabase, student.email);
+    if (!existing) { rows.push({ student, result: 'not found' }); continue; }
     if (existing.app_metadata?.examsphere_demo !== true) {
-      rows.push({ ...student, action: 'SKIPPED (not tagged as demo)' });
+      rows.push({ student, result: 'SKIPPED (not tagged as demo)' });
       continue;
     }
     if (!DRY_RUN) {
       const { error } = await supabase.auth.admin.deleteUser(existing.id);
       if (error) throw new Error(`deleteUser failed for ${student.email}: ${error.message}`);
     }
-    rows.push({ ...student, action: DRY_RUN ? 'would delete' : 'deleted' });
+    rows.push({ student, result: DRY_RUN ? 'would delete' : 'deleted' });
   }
-  return rows;
+  return { rows };
 }
 
 try {
-  const rows = DELETE ? await remove() : await provision();
-  console.log(`\nExamSphere demo accounts — ${DELETE ? 'delete' : 'provision'}${DRY_RUN ? ' (dry run)' : ''}\n`);
-  console.table(rows.map((r) => ({ 'Student ID': r.usn, Name: r.name, Email: r.email, Pattern: r.pattern, Result: r.action })));
+  const out = DELETE ? await remove() : await provision();
+  console.log(`\nExamSphere demo accounts — ${DELETE ? 'delete' : 'provision'}${DRY_RUN ? ' (dry run: read-only, nothing written)' : ''}\n`);
+  if (out.schema) {
+    console.log(describeSchema(out.schema));
+    console.log(`Dr. AIT institution link: ${out.institutionId ? 'yes' : 'no (institutions table or profiles.institution_id not present)'}\n`);
+  }
+  console.table(out.rows.map((r) => ({ 'Student ID': r.student.usn, Name: r.student.name, Email: r.student.email, Pattern: r.student.pattern, Result: r.result })));
   if (!DELETE && !DRY_RUN) {
     console.log('\nTemporary password (shown once, shared by all five demo accounts):\n');
     console.log(`    ${password}\n`);

@@ -56,7 +56,7 @@ export function AuthProvider({ children }) {
       }
 
       activeUserIdRef.current = userId;
-      setUser(buildUserObject(session.user, profile, role));
+      setUser(buildUserObject(session.user, profile, role, session.access_token));
     } catch (err) {
       // Discard stale resolution
       if (currentSeq !== hydrationSequenceRef.current) {
