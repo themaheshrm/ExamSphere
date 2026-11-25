@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Ban, CheckCircle2, Download, Edit3, Plus, RotateCcw, Search, Trash2, UserPlus, Users } from 'lucide-react';
+import { Ban, CheckCircle2, Copy, Download, Edit3, KeyRound, Plus, RotateCcw, Search, Trash2, UserPlus, Users } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
 import InputField from '../../components/common/InputField';
@@ -13,6 +13,8 @@ import Badge from '../../components/common/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useToast } from '../../components/common/Toast';
 import { studentRosterService } from '../../services/studentRosterService';
+import { studentAccountService } from '../../services/studentAccountService';
+import Alert from '../../components/common/Alert';
 import { useAdminExamContext } from '../../utils/useAdminExamContext';
 import { ExamSwitcher, ExamNotCreated, ScopeDenied } from '../../components/admin/ExamScope';
 import { activityLogService } from '../../services/activityLogService';
@@ -21,7 +23,7 @@ import { usePagination } from '../../utils/usePagination';
 import { downloadText, toCsv } from '../../services/localStore';
 import { useAuth } from '../../context/AuthContext';
 
-const EMPTY = { usn: '', name: '', email: '', department: 'Computer Science & Engineering', semester: 6, section: 'A', status: 'Eligible', remarks: '' };
+const EMPTY = { usn: '', name: '', email: '', mobile: '', department: 'Computer Science & Engineering', semester: 6, section: 'A', status: 'Eligible', remarks: '' };
 const selectCls = 'es-select h-9 w-full rounded-sm border border-slate-300 bg-white pl-3 text-sm focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]';
 
 function StudentsView({ service, examCode, summaries, selectExam, scope }) {
@@ -38,6 +40,11 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
   const [editing, setEditing] = useState(null); // null | 'new' | usn
   const [form, setForm] = useState(EMPTY);
   const [fieldErrors, setFieldErrors] = useState({});
+  const [creating, setCreating] = useState(false);
+  // One-time credentials of the account just created. Held only in this
+  // component's memory; cleared when the dialog closes; never persisted.
+  const [credentials, setCredentials] = useState(null);
+  const [copied, setCopied] = useState(false);
   const [removeTarget, setRemoveTarget] = useState(null);
   const [withholdOpen, setWithholdOpen] = useState(false);
   const [withholdReason, setWithholdReason] = useState('');
@@ -85,9 +92,50 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
     setFieldErrors({});
   };
 
+  const createStudent = async () => {
+    setCreating(true);
+    try {
+      // Server-side: Supabase Auth user + student profile + temporary password.
+      const { student, credentials: issued } = await studentAccountService.createStudent(form);
+      // Local roster (exam eligibility in this build) — never holds the password.
+      const entry = { ...form, usn: student.usn, name: student.name, email: student.email, mobile: student.mobile, department: student.department, semester: student.semester, section: student.section };
+      const existing = studentRosterService.find(student.usn);
+      studentRosterService.save(existing ? { ...existing, ...entry, status: existing.status, remarks: existing.remarks } : entry, existing ? existing.usn : null);
+      log('Created student account', student.usn, `${student.name} · login ${student.email}`);
+      setEditing(null);
+      setCopied(false);
+      setCredentials(issued);
+      refresh();
+    } catch (error) {
+      setFieldErrors(error.fieldErrors || { form: error.message });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const credentialsText = credentials ? [
+    'ExamSphere — Dr. AIT student sign-in',
+    `Student ID: ${credentials.studentId}`,
+    `Email: ${credentials.email}`,
+    `Temporary Password: ${credentials.temporaryPassword}`,
+    `Sign in: ${window.location.origin}/login → Student Login. You will be asked to set a new password.`,
+  ].join('\n') : '';
+
+  const copyCredentials = async () => {
+    try {
+      await navigator.clipboard.writeText(credentialsText);
+      setCopied(true);
+    } catch {
+      notify('Copy failed. Select the details and copy them manually.', 'warning');
+    }
+  };
+
+  const closeCredentials = () => { setCredentials(null); setCopied(false); };
+
   const saveCandidate = (event) => {
     event.preventDefault();
     if (!canEditRoster) return;
+    if (editing === 'new') { createStudent(); return; }
     try {
       const saved = studentRosterService.save(form, editing === 'new' ? null : editing);
       log(editing === 'new' ? 'Added candidate' : 'Updated candidate', saved.usn, saved.name);
@@ -153,7 +201,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
               <Button variant="secondary" icon={RotateCcw} onClick={() => setResetDemoOpen(true)}>Reset demo attempts</Button>
             )}
             <Button variant="secondary" icon={Download} onClick={exportCsv} disabled={!filtered.length}>Export CSV</Button>
-            {canEditRoster && <Button icon={UserPlus} onClick={() => openForm(null)}>Add candidate</Button>}
+            {canEditRoster && <Button icon={UserPlus} onClick={() => openForm(null)}>Add student</Button>}
           </>
         )}
       />
@@ -194,7 +242,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
         )}
 
         {filtered.length === 0 ? (
-          <EmptyState icon={Users} title={roster.length ? 'No candidates match' : 'No candidates yet'} description={roster.length ? 'Try a different search or filter.' : 'Add candidates to build the examination roster.'} action={canEditRoster && !roster.length && <Button size="sm" icon={Plus} onClick={() => openForm(null)}>Add candidate</Button>} />
+          <EmptyState icon={Users} title={roster.length ? 'No candidates match' : 'No candidates yet'} description={roster.length ? 'Try a different search or filter.' : 'Add candidates to build the examination roster.'} action={canEditRoster && !roster.length && <Button size="sm" icon={Plus} onClick={() => openForm(null)}>Add student</Button>} />
         ) : (
           <>
             <Table className="rounded-none border-x-0 border-b-0">
@@ -253,33 +301,65 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
       <Modal
         isOpen={Boolean(editing)}
         onClose={() => setEditing(null)}
-        title={editing === 'new' ? 'Add candidate' : `Edit ${editing}`}
-        subtitle="Candidates are matched to their login by USN."
+        title={editing === 'new' ? 'Add student' : `Edit ${editing}`}
+        subtitle={editing === 'new' ? 'Creates the student’s sign-in account and a one-time temporary password.' : 'Candidates are matched to their login by USN.'}
         maxWidth="max-w-2xl"
         footer={(
           <>
-            <Button variant="secondary" onClick={() => setEditing(null)}>Cancel</Button>
-            <Button type="submit" form="candidate-form">{editing === 'new' ? 'Add candidate' : 'Save changes'}</Button>
+            <Button variant="secondary" onClick={() => setEditing(null)} disabled={creating}>Cancel</Button>
+            <Button type="submit" form="candidate-form" isLoading={creating}>{editing === 'new' ? 'Create student' : 'Save changes'}</Button>
           </>
         )}
       >
         <form id="candidate-form" onSubmit={saveCandidate} className="grid gap-4 sm:grid-cols-2" noValidate>
-          {fieldErrors.form && <p className="text-xs text-red-600 sm:col-span-2">{fieldErrors.form}</p>}
-          <InputField label="USN" required value={form.usn} onChange={(e) => setForm({ ...form, usn: e.target.value.toUpperCase() })} error={fieldErrors.usn} placeholder="1DA22CS011" inputClassName="font-mono uppercase" />
+          {fieldErrors.form && <div className="sm:col-span-2"><Alert tone="danger">{fieldErrors.form}</Alert></div>}
           <InputField label="Full name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} error={fieldErrors.name} />
-          <InputField label="Institutional email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} error={fieldErrors.email} helperText="Defaults to usn@drait.edu.in" />
-          <InputField label="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
+          <InputField label="USN / Student ID" required value={form.usn} disabled={editing !== 'new'} onChange={(e) => setForm({ ...form, usn: e.target.value.toUpperCase() })} error={fieldErrors.usn} placeholder="1DA22CS011" inputClassName="font-mono uppercase" />
+          <InputField label="Email address" type="email" value={form.email} disabled={editing !== 'new'} onChange={(e) => setForm({ ...form, email: e.target.value })} error={fieldErrors.email} helperText={editing === 'new' ? 'Leave blank to use usn@drait.edu.in (sign-in email)' : 'Sign-in email'} />
+          <InputField label="Mobile number" type="tel" required={editing === 'new'} value={form.mobile || ''} onChange={(e) => setForm({ ...form, mobile: e.target.value })} error={fieldErrors.mobile} placeholder="+91 98450 12345" />
+          <InputField label="Department" required value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} error={fieldErrors.department} />
           <InputField label="Semester" type="number" min="1" max="8" required value={form.semester} onChange={(e) => setForm({ ...form, semester: e.target.value })} error={fieldErrors.semester} />
           <InputField label="Section" required maxLength={1} value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value.toUpperCase() })} error={fieldErrors.section} />
-          <div>
+          {editing !== 'new' && <div>
             <label htmlFor="cand-status" className="mb-1 block text-xs font-medium text-slate-800">Eligibility</label>
             <select id="cand-status" className={selectCls} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
               <option>Eligible</option>
               <option>Withheld</option>
             </select>
-          </div>
-          <InputField label="Remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} helperText="Reason when withheld (e.g. attendance shortage)" />
+          </div>}
+          {editing !== 'new' && <InputField label="Remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} helperText="Reason when withheld (e.g. attendance shortage)" />}
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(credentials)}
+        onClose={closeCredentials}
+        title="Student account created"
+        subtitle="Share these sign-in details with the student. The password is shown only once."
+        maxWidth="max-w-md"
+        footer={(
+          <>
+            <Button variant="secondary" icon={Copy} onClick={copyCredentials}>{copied ? 'Copied' : 'Copy credentials'}</Button>
+            <Button onClick={closeCredentials}>Done</Button>
+          </>
+        )}
+      >
+        {credentials && (
+          <div className="space-y-4">
+            <dl className="divide-y divide-slate-100 rounded-sm border border-slate-200 text-sm" aria-label="Sign-in details">
+              {[['Student ID', credentials.studentId], ['Email', credentials.email], ['Temporary Password', credentials.temporaryPassword]].map(([k, v]) => (
+                <div key={k} className="flex items-center justify-between gap-4 px-4 py-3">
+                  <dt className="text-xs text-slate-500">{k}</dt>
+                  <dd className="select-all break-all text-right font-mono font-semibold text-slate-900" data-credential={k}>{v}</dd>
+                </div>
+              ))}
+            </dl>
+            <Alert tone="warning" title="Shown once">
+              The temporary password is not stored anywhere in ExamSphere and cannot be displayed again. The student must set a new password at first sign-in. If it is lost, create a reset from Supabase Auth.
+            </Alert>
+            <p className="flex items-start gap-2 text-xs text-slate-600"><KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />The student signs in on the Student Login tab with the Student ID and this password.</p>
+          </div>
+        )}
       </Modal>
 
       <Modal

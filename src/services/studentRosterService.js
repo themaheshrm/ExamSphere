@@ -84,6 +84,7 @@ export function validateCandidate(input) {
       usn,
       name,
       email: email || `${usn.toLowerCase()}@${INSTITUTION.emailDomain}`,
+      mobile: String(input.mobile ?? '').trim().slice(0, 25),
       department: String(input.department ?? '').trim() || 'Computer Science & Engineering',
       semester,
       section,

@@ -23,6 +23,10 @@ export function buildUserObject(authUser, profile, role, accessToken = null) {
     staffId,
     role,
     institution_id: profile.institution_id || null,
+    // Set by the server (create-student) for accounts with a temporary
+    // password; cleared only by change-temporary-password. Read from the
+    // signed token so it cannot be removed by editing browser storage.
+    mustChangePassword: claims?.app_metadata?.must_change_password === true,
     // Every identity signal used to resolve a subject-admin scope. More
     // signals can only narrow access (see adminScope.getAdminScope).
     scopeSignals: {

@@ -146,7 +146,7 @@ async function provision() {
 
   const rows = [];
   for (const plan of plans) {
-    const { admin, subject, demoUser } = plan;
+    const { admin, demoUser } = plan;
     const password = sharedPassword || generatePassword();
     const appMetadata = {
       examsphere_demo: true,

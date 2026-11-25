@@ -7,12 +7,29 @@
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 
-export function startMockSupabase({ tables, users = [], signupTrigger = true }) {
-  const state = { tables: structuredClone(tables), users: structuredClone(users), writes: [] };
+export function startMockSupabase({ tables, users = [], signupTrigger = true, port = 0, host = '127.0.0.1', serviceKey = null, functions = {} }) {
+  const state = { tables: structuredClone(tables), users: structuredClone(users), writes: [], requests: [], sessions: new Map(), refresh: new Map() };
+  const CORS = {
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type, prefer, accept-profile, content-profile, x-supabase-api-version',
+    'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+  };
   const send = (res, status, body) => {
-    res.writeHead(status, { 'content-type': 'application/json' });
+    res.writeHead(status, { 'content-type': 'application/json', ...CORS });
     res.end(body === undefined ? '' : JSON.stringify(body));
   };
+  // GoTrue never returns password material.
+  const publicUser = ({ password: _password, rotated: _rotated, ...u }) => ({ aud: 'authenticated', role: 'authenticated', user_metadata: {}, created_at: '2026-01-01T00:00:00Z', ...u });
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const issueSession = (user) => {
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const access = `${b64({ alg: 'none', typ: 'JWT' })}.${b64({ sub: user.id, email: user.email, role: 'authenticated', aud: 'authenticated', app_metadata: user.app_metadata || {}, exp })}.mock${randomUUID().slice(0, 8)}`;
+    const refresh = randomUUID();
+    state.sessions.set(access, user.id); state.refresh.set(refresh, user.id);
+    return { access_token: access, token_type: 'bearer', expires_in: 3600, expires_at: exp, refresh_token: refresh, user: publicUser(user) };
+  };
+  const bearer = (req) => (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const isAdminCall = (req) => !serviceKey || bearer(req) === serviceKey;
   const missingColumn = (res, table, col) => send(res, 400, { code: '42703', message: `column ${table}.${col} does not exist`, details: null, hint: null });
   const unknownBodyColumn = (res, table, col) => send(res, 400, { code: 'PGRST204', message: `Could not find the '${col}' column of '${table}' in the schema cache`, details: null, hint: null });
 
@@ -45,24 +62,59 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true }) 
     req.on('data', (c) => { raw += c; });
     req.on('end', () => {
       const url = new URL(req.url, 'http://mock');
-      const body = raw ? JSON.parse(raw) : null;
-      if (req.method !== 'GET' && req.method !== 'HEAD') state.writes.push(`${req.method} ${url.pathname}${url.search}`);
+      let body = null; try { body = raw ? JSON.parse(raw) : null; } catch { body = null; }
+      state.requests.push({ method: req.method, path: url.pathname, auth: bearer(req) === serviceKey ? 'service' : (bearer(req) ? 'user' : 'none'), body: raw });
+      if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
+      if (req.method !== 'GET' && req.method !== 'HEAD' && !url.pathname.startsWith('/auth/v1/token') && !url.pathname.startsWith('/functions/')) state.writes.push(`${req.method} ${url.pathname}${url.search}`);
 
-      // ── Auth Admin API ──
-      if (url.pathname === '/auth/v1/admin/users' && req.method === 'GET') return send(res, 200, { users: state.users, aud: 'authenticated' });
+      // ── Edge Functions (the real handlers, running in this process) ──
+      const fn = url.pathname.match(/^\/functions\/v1\/([a-z-]+)$/);
+      if (fn) {
+        const handler = functions[fn[1]];
+        if (!handler) return send(res, 404, { message: `Function ${fn[1]} not found` });
+        const request = new Request(`http://mock${url.pathname}`, { method: req.method, headers: Object.entries(req.headers).filter(([, v]) => typeof v === 'string'), body: ['GET', 'HEAD'].includes(req.method) ? undefined : raw });
+        Promise.resolve(handler(request)).then(async (response) => {
+          const text = await response.text();
+          res.writeHead(response.status, { ...Object.fromEntries(response.headers), ...CORS });
+          res.end(text);
+        }).catch((e) => send(res, 500, { message: `mock function crashed: ${e.message}` }));
+        return;
+      }
+
+      // ── Auth (user-facing) ──
+      if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'password') {
+        const user = state.users.find((u) => u.email === String(body?.email || '').toLowerCase());
+        if (!user || user.password !== body?.password) return send(res, 400, { error: 'invalid_grant', error_description: 'Invalid login credentials', code: 'invalid_credentials', msg: 'Invalid login credentials' });
+        return send(res, 200, issueSession(user));
+      }
+      if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'refresh_token') {
+        const user = state.users.find((u) => u.id === state.refresh.get(body?.refresh_token));
+        if (!user) return send(res, 400, { error: 'invalid_grant', error_description: 'Invalid Refresh Token' });
+        state.refresh.delete(body.refresh_token);
+        return send(res, 200, issueSession(user));
+      }
+      if (url.pathname === '/auth/v1/user' && req.method === 'GET') {
+        const user = state.users.find((u) => u.id === state.sessions.get(bearer(req)));
+        return user ? send(res, 200, publicUser(user)) : send(res, 401, { code: 'bad_jwt', msg: 'invalid JWT' });
+      }
+      if (url.pathname === '/auth/v1/logout') { state.sessions.delete(bearer(req)); res.writeHead(204, CORS); return res.end(); }
+
+      // ── Auth Admin API (service role only) ──
+      if (url.pathname.startsWith('/auth/v1/admin/') && !isAdminCall(req)) return send(res, 403, { code: 'not_admin', msg: 'User not allowed' });
+      if (url.pathname === '/auth/v1/admin/users' && req.method === 'GET') return send(res, 200, { users: state.users.map(publicUser), aud: 'authenticated' });
       if (url.pathname === '/auth/v1/admin/users' && req.method === 'POST') {
         if (state.users.some((u) => u.email === body.email)) return send(res, 422, { code: 'email_exists', msg: 'A user with this email address has already been registered' });
         const user = { id: randomUUID(), email: body.email, app_metadata: body.app_metadata || {}, user_metadata: body.user_metadata || {}, password: body.password };
         state.users.push(user);
         if (signupTrigger) triggerProfile(user);
-        return send(res, 200, user);
+        return send(res, 200, publicUser(user));
       }
       const m = url.pathname.match(/^\/auth\/v1\/admin\/users\/([^/]+)$/);
       if (m) {
         const user = state.users.find((u) => u.id === m[1]);
         if (!user) return send(res, 404, { msg: 'User not found' });
-        if (req.method === 'GET') return send(res, 200, user);
-        if (req.method === 'PUT') { Object.assign(user, { app_metadata: body.app_metadata ?? user.app_metadata, password: body.password ?? user.password, rotated: true }); return send(res, 200, user); }
+        if (req.method === 'GET') return send(res, 200, publicUser(user));
+        if (req.method === 'PUT') { Object.assign(user, { app_metadata: body.app_metadata ?? user.app_metadata, password: body.password ?? user.password, rotated: true }); return send(res, 200, publicUser(user)); }
         if (req.method === 'DELETE') {
           state.users = state.users.filter((u) => u.id !== user.id);
           if (state.tables.profiles) state.tables.profiles.rows = state.tables.profiles.rows.filter((r) => r.id !== user.id);
@@ -122,8 +174,8 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true }) 
   });
 
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      resolve({ url: `http://127.0.0.1:${server.address().port}`, state, close: () => new Promise((r) => server.close(r)) });
+    server.listen(port, host, () => {
+      resolve({ url: `http://127.0.0.1:${server.address().port}`, state, close: () => new Promise((r) => { server.close(r); server.closeAllConnections?.(); }) });
     });
   });
 }
