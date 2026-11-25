@@ -13,7 +13,8 @@ import Badge from '../../components/common/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useToast } from '../../components/common/Toast';
 import { studentRosterService } from '../../services/studentRosterService';
-import { examRandomizerService } from '../../services/examRandomizerService';
+import { useAdminExamContext } from '../../utils/useAdminExamContext';
+import { ExamSwitcher, ExamNotCreated, ScopeDenied } from '../../components/admin/ExamScope';
 import { activityLogService } from '../../services/activityLogService';
 import { assignPatternForCandidate } from '../../utils/patternAssignment';
 import { usePagination } from '../../utils/usePagination';
@@ -23,8 +24,11 @@ import { useAuth } from '../../context/AuthContext';
 const EMPTY = { usn: '', name: '', email: '', department: 'Computer Science & Engineering', semester: 6, section: 'A', status: 'Eligible', remarks: '' };
 const selectCls = 'es-select h-9 w-full rounded-sm border border-slate-300 bg-white pl-3 text-sm focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]';
 
-export default function StudentsPage() {
+function StudentsView({ service, examCode, summaries, selectExam, scope }) {
   const { user } = useAuth();
+  // Subject-scoped admins view candidates of their examination; the roster
+  // itself (add / edit / eligibility) stays with the institution admin.
+  const canEditRoster = !scope.scoped;
   const { notify } = useToast();
   const [roster, setRoster] = useState(() => studentRosterService.list());
   const [search, setSearch] = useState('');
@@ -38,18 +42,18 @@ export default function StudentsPage() {
   const [withholdOpen, setWithholdOpen] = useState(false);
   const [withholdReason, setWithholdReason] = useState('');
 
-  const meta = examRandomizerService.getExamState().meta;
+  const meta = service.getExamState().meta;
   const [, setAttemptsVersion] = useState(0); // bumped to re-read attempts after a demo reset
   const [resetDemoOpen, setResetDemoOpen] = useState(false);
   const attempts = {};
-  examRandomizerService.listAttempts().forEach((a) => { if (!attempts[a.studentIdentifier]) attempts[a.studentIdentifier] = a; });
+  service.listAttempts().forEach((a) => { if (!attempts[a.studentIdentifier]) attempts[a.studentIdentifier] = a; });
 
   const refresh = () => setRoster(studentRosterService.list());
   const demoUsns = roster.filter((s) => s.demo).map((s) => s.usn);
 
   const resetDemoAttempts = () => {
     try {
-      const removed = examRandomizerService.resetDemoAttempts(demoUsns);
+      const removed = service.resetDemoAttempts(demoUsns);
       log('Reset demo attempts', `${demoUsns.length} demo account(s)`, `${removed} attempt(s) cleared`);
       notify(`Demo attempts reset (${removed} cleared). Patterns stay assigned A–E.`);
       setAttemptsVersion((v) => v + 1);
@@ -83,6 +87,7 @@ export default function StudentsPage() {
 
   const saveCandidate = (event) => {
     event.preventDefault();
+    if (!canEditRoster) return;
     try {
       const saved = studentRosterService.save(form, editing === 'new' ? null : editing);
       log(editing === 'new' ? 'Added candidate' : 'Updated candidate', saved.usn, saved.name);
@@ -95,6 +100,7 @@ export default function StudentsPage() {
   };
 
   const applyStatus = (next, reason = '') => {
+    if (!canEditRoster) return;
     studentRosterService.setStatus(selected, next, reason);
     log(next === 'Withheld' ? 'Withheld candidates' : 'Restored candidate eligibility', `${selected.length} candidate(s)`, reason);
     notify(`${selected.length} candidate${selected.length === 1 ? '' : 's'} marked ${next.toLowerCase()}.`, next === 'Withheld' ? 'warning' : 'success');
@@ -105,6 +111,7 @@ export default function StudentsPage() {
   };
 
   const confirmRemove = () => {
+    if (!canEditRoster) return;
     studentRosterService.remove(removeTarget.usn);
     log('Removed candidate', removeTarget.usn, removeTarget.name);
     notify(`${removeTarget.usn} removed from the roster.`);
@@ -138,14 +145,15 @@ export default function StudentsPage() {
       <PageHeader
         eyebrow="Examinations"
         title="Candidates"
-        description={`Roster and eligibility for ${meta.courseCode} — ${meta.courseTitle}. Withheld candidates cannot start the examination.`}
+        description={`${canEditRoster ? 'Roster and eligibility' : 'Candidates and attempts'} for ${meta.courseCode} — ${meta.courseTitle}. Withheld candidates cannot start the examination.`}
         actions={(
           <>
+            <ExamSwitcher summaries={summaries} value={examCode} onChange={selectExam} />
             {demoUsns.length > 0 && (
               <Button variant="secondary" icon={RotateCcw} onClick={() => setResetDemoOpen(true)}>Reset demo attempts</Button>
             )}
             <Button variant="secondary" icon={Download} onClick={exportCsv} disabled={!filtered.length}>Export CSV</Button>
-            <Button icon={UserPlus} onClick={() => openForm(null)}>Add candidate</Button>
+            {canEditRoster && <Button icon={UserPlus} onClick={() => openForm(null)}>Add candidate</Button>}
           </>
         )}
       />
@@ -174,7 +182,7 @@ export default function StudentsPage() {
           </select>
         </div>
 
-        {selected.length > 0 && (
+        {canEditRoster && selected.length > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-[#F0F4F8] px-4 py-2.5 text-xs" aria-live="polite">
             <span className="font-semibold text-[#1E3A5F]">{selected.length} selected</span>
             <div className="flex flex-wrap gap-2">
@@ -186,19 +194,19 @@ export default function StudentsPage() {
         )}
 
         {filtered.length === 0 ? (
-          <EmptyState icon={Users} title={roster.length ? 'No candidates match' : 'No candidates yet'} description={roster.length ? 'Try a different search or filter.' : 'Add candidates to build the examination roster.'} action={!roster.length && <Button size="sm" icon={Plus} onClick={() => openForm(null)}>Add candidate</Button>} />
+          <EmptyState icon={Users} title={roster.length ? 'No candidates match' : 'No candidates yet'} description={roster.length ? 'Try a different search or filter.' : 'Add candidates to build the examination roster.'} action={canEditRoster && !roster.length && <Button size="sm" icon={Plus} onClick={() => openForm(null)}>Add candidate</Button>} />
         ) : (
           <>
             <Table className="rounded-none border-x-0 border-b-0">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-10"><input type="checkbox" aria-label="Select all on this page" checked={allOnPage} onChange={toggleAll} className="h-4 w-4 accent-[#1E3A5F]" /></TableHead>
+                  {canEditRoster && <TableHead className="w-10"><input type="checkbox" aria-label="Select all on this page" checked={allOnPage} onChange={toggleAll} className="h-4 w-4 accent-[#1E3A5F]" /></TableHead>}
                   <TableHead>Candidate</TableHead>
                   <TableHead className="hidden md:table-cell">Sem / Sec</TableHead>
                   <TableHead className="hidden sm:table-cell">Eligibility</TableHead>
                   <TableHead className="hidden sm:table-cell">Pattern</TableHead>
                   <TableHead className="hidden sm:table-cell">Attempt</TableHead>
-                  <TableHead align="right">Actions</TableHead>
+                  {canEditRoster && <TableHead align="right">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -206,7 +214,7 @@ export default function StudentsPage() {
                   const attempt = attempts[s.usn];
                   return (
                     <TableRow key={s.usn} isSelected={selected.includes(s.usn)}>
-                      <TableCell><input type="checkbox" aria-label={`Select ${s.usn}`} checked={selected.includes(s.usn)} onChange={() => toggle(s.usn)} className="h-4 w-4 accent-[#1E3A5F]" /></TableCell>
+                      {canEditRoster && <TableCell><input type="checkbox" aria-label={`Select ${s.usn}`} checked={selected.includes(s.usn)} onChange={() => toggle(s.usn)} className="h-4 w-4 accent-[#1E3A5F]" /></TableCell>}
                       <TableCell>
                         <p className="flex items-center gap-1.5 font-mono text-xs font-semibold text-[#1E3A5F]">{s.usn}{s.demo && <Badge size="sm" variant="primary" className="font-sans">Demo</Badge>}</p>
                         <p className="font-medium text-slate-900">{s.name}</p>
@@ -226,12 +234,12 @@ export default function StudentsPage() {
                           <span className="text-xs tabular-nums"><strong className="text-slate-900">{attempt.result?.score}</strong> / {attempt.result?.maxScore}</span>
                         )}
                       </TableCell>
-                      <TableCell align="right">
+                      {canEditRoster && <TableCell align="right">
                         <div className="flex justify-end gap-1">
                           <button type="button" aria-label={`Edit ${s.usn}`} onClick={() => openForm(s)} className="rounded-sm p-2 text-slate-500 hover:bg-slate-100 hover:text-[#1E3A5F]"><Edit3 className="h-4 w-4" /></button>
                           <button type="button" aria-label={`Remove ${s.usn}`} onClick={() => setRemoveTarget(s)} className="rounded-sm p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700"><Trash2 className="h-4 w-4" /></button>
                         </div>
-                      </TableCell>
+                      </TableCell>}
                     </TableRow>
                   );
                 })}
@@ -311,4 +319,11 @@ export default function StudentsPage() {
       />
     </div>
   );
+}
+
+export default function StudentsPage() {
+  const ctx = useAdminExamContext();
+  if (!ctx.allowed) return <ScopeDenied examCode={ctx.examCode} scope={ctx.scope} />;
+  if (!ctx.service.exists()) return <ExamNotCreated eyebrow="Examinations" title="Candidates" examCode={ctx.examCode} summaries={ctx.summaries} onSelect={ctx.selectExam} scope={ctx.scope} />;
+  return <StudentsView key={ctx.examCode} {...ctx} />;
 }

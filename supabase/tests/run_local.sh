@@ -19,8 +19,9 @@ done
 for f in tests/000_supabase_shim.sql migrations/*.sql; do
   echo "== $f"; "${P[@]}" -d "$DB" -f "$f"
 done
-echo "== idempotency: re-applying 005-010"
-for f in migrations/00[5-9]_*.sql migrations/010_*.sql; do "${P[@]}" -d "$DB" -f "$f" >/dev/null; done
+echo "== idempotency: re-applying 005-011"
+for f in migrations/00[5-9]_*.sql migrations/01[0-9]_*.sql; do "${P[@]}" -d "$DB" -f "$f" >/dev/null; done
 
 "${P[@]}" -d "$DB" -f tests/100_e2e_security_test.sql 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE"
 psql -U authenticator -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/110_api_session_immutability.sql 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE"
+"${P[@]}" -d "$DB" -f tests/120_subject_admin_scope_test.sql 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE"

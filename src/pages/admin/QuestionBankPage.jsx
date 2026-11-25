@@ -15,8 +15,11 @@ import EmptyState from '../../components/common/EmptyState';
 import StatusBadge from '../../components/common/StatusBadge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useToast } from '../../components/common/Toast';
-import { questionBankService, DIFFICULTIES, validateQuestion } from '../../services/questionBankService.js';
-import { examRandomizerService } from '../../services/examRandomizerService.js';
+import { DIFFICULTIES, validateQuestion } from '../../services/questionBankService.js';
+import { scopedQuestionBank } from '../../services/scopedQuestionBank.js';
+import { getAdminScope, DEFAULT_EXAM_CODE } from '../../services/adminScope.js';
+import { getScopedExamService, defaultSubjectMeta } from '../../services/examRegistry.js';
+import { subjectByCode, subjectForQuestion } from '../../data/subjectCatalog.js';
 import { activityLogService } from '../../services/activityLogService.js';
 import { downloadQuestionTemplate, readQuestionImportFile, QUESTION_IMPORT_HEADERS } from '../../utils/questionImport.js';
 import { usePagination } from '../../utils/usePagination';
@@ -34,7 +37,10 @@ export default function QuestionBankPage() {
   const { user } = useAuth();
   const { notify } = useToast();
   const fileRef = useRef(null);
-  const [questions, setQuestions] = useState(() => questionBankService.getQuestions());
+  const scope = getAdminScope(user);
+  const bank = scopedQuestionBank(scope);
+  const scopedSubject = scope.scoped ? subjectByCode(scope.subjectCodes[0]) : null;
+  const [questions, setQuestions] = useState(() => bank.getQuestions());
   const [search, setSearch] = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
   const [topicFilter, setTopicFilter] = useState('');
@@ -77,12 +83,12 @@ export default function QuestionBankPage() {
   const importSummary = useMemo(() => ['Ready', 'Duplicate', 'Invalid', 'Imported']
     .map((status) => [status, importRows.filter((row) => row.status === status).length]), [importRows]);
 
-  const refreshQuestions = () => setQuestions(questionBankService.getQuestions());
+  const refreshQuestions = () => setQuestions(bank.getQuestions());
   const log = (action, target, details) => activityLogService.log({ action, category: 'question-bank', actor: user, target, details });
 
   const openCreate = () => {
     setEditingQuestion(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, subject: scopedSubject?.title || '' });
     setFormErrors([]);
     setQuestionModal(true);
   };
@@ -111,7 +117,7 @@ export default function QuestionBankPage() {
       return;
     }
     try {
-      const saved = questionBankService.saveQuestion(form, editingQuestion?.id ?? null);
+      const saved = bank.saveQuestion(form, editingQuestion?.id ?? null);
       refreshQuestions();
       setQuestionModal(false);
       log(editingQuestion ? 'Edited question' : 'Added question', `Q${saved.id}`, saved.statement.slice(0, 80));
@@ -123,7 +129,13 @@ export default function QuestionBankPage() {
 
   const confirmDelete = () => {
     if (!deleteTarget) return;
-    questionBankService.deleteQuestion(deleteTarget.id);
+    try {
+      bank.deleteQuestion(deleteTarget.id);
+    } catch (error) {
+      notify(error.message, 'error');
+      setDeleteTarget(null);
+      return;
+    }
     setSelectedIds((current) => current.filter((id) => id !== deleteTarget.id));
     refreshQuestions();
     log('Deleted question', `Q${deleteTarget.id}`, deleteTarget.statement.slice(0, 80));
@@ -145,8 +157,18 @@ export default function QuestionBankPage() {
   const sendQuestionsToGenerator = () => {
     if (selectedIds.length !== 25) return;
     const selectedQuestions = selectedIds.map((id) => questions.find((item) => item.id === id));
+    // Target exam: the single catalogue subject of all 25 questions; otherwise
+    // (institution-wide admins only) the original 22CS601 examination.
+    const codes = [...new Set(selectedQuestions.map((q) => subjectForQuestion(q.subject)?.code || null))];
+    const target = codes.length === 1 && codes[0] ? codes[0] : (!scope.scoped ? DEFAULT_EXAM_CODE : null);
+    if (!target) {
+      setConfirmSend(false);
+      notify('All 25 questions must belong to your assigned subject.', 'error');
+      return;
+    }
     try {
-      examRandomizerService.setMasterQuestions(selectedQuestions.map((question) => ({
+      const service = getScopedExamService(scope, target);
+      const masters = selectedQuestions.map((question) => ({
         id: Number(question.id),
         text: question.statement,
         options: [...question.options],
@@ -156,11 +178,13 @@ export default function QuestionBankPage() {
         difficulty: question.difficulty,
         marks: Number(question.marks),
         negativeMarks: Number(question.negativeMarks),
-      })));
-      log('Replaced examination question set', '25 questions', 'Patterns A–J regenerated');
+      }));
+      if (service.exists()) service.setMasterQuestions(masters);
+      else service.createExam(defaultSubjectMeta(target), masters);
+      log('Replaced examination question set', target, '25 questions · patterns A–J regenerated');
       notify('The 25 questions were sent to the generator and patterns A–J were regenerated. Active attempts keep their saved paper.');
       setConfirmSend(false);
-      navigate('/admin/exams');
+      navigate(`/admin/exams?exam=${target}`);
     } catch (error) {
       setConfirmSend(false);
       notify(error.message || 'Could not update the exam generator.', 'error');
@@ -184,7 +208,7 @@ export default function QuestionBankPage() {
     setIsReading(true);
     try {
       const preview = await readQuestionImportFile(file, questions);
-      setImportRows(preview.rows);
+      setImportRows(bank.applyScopeToPreview(preview.rows));
       setImportErrors(preview.errors);
       if (!preview.rows.length && !preview.errors.length) {
         setImportErrors(['No question rows were found in the selected file.']);
@@ -198,7 +222,7 @@ export default function QuestionBankPage() {
 
   const confirmImport = () => {
     try {
-      const imported = questionBankService.importQuestions(readyImportRows.map((row) => row.question));
+      const imported = bank.importQuestions(readyImportRows.map((row) => row.question));
       refreshQuestions();
       setImportRows((current) => current.map((row) => row.status === 'Ready'
         ? { ...row, status: 'Imported' }
@@ -230,7 +254,9 @@ export default function QuestionBankPage() {
       <PageHeader
         eyebrow="Examination Office"
         title="Question Bank"
-        description="Create, import and review multiple-choice questions. Select exactly 25 to form an examination's master question set."
+        description={scopedSubject
+          ? `${scopedSubject.code} · ${scopedSubject.title}. Create, import and review questions for your subject. Select exactly 25 to form its examination's question set.`
+          : "Create, import and review multiple-choice questions. Select exactly 25 to form an examination's master question set."}
         actions={(
           <>
             <Button variant="secondary" icon={Upload} onClick={openImport}>Import CSV / Excel</Button>
@@ -399,7 +425,7 @@ export default function QuestionBankPage() {
             </Alert>
           )}
           <div className="grid gap-4 sm:grid-cols-2">
-            <InputField label="Subject" required list="qb-subjects" value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="e.g. Software Engineering" />
+            <InputField label="Subject" required list="qb-subjects" value={form.subject} readOnly={Boolean(scopedSubject)} helperText={scopedSubject ? 'Fixed to your assigned subject' : undefined} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="e.g. Software Engineering" />
             <InputField label="Topic / unit" required list="qb-topics" value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} placeholder="e.g. Unit 2 – Design Patterns" />
             <datalist id="qb-subjects">{subjects.map((s) => <option key={s} value={s} />)}</datalist>
             <datalist id="qb-topics">{[...new Set(questions.map((q) => q.topic))].map((t) => <option key={t} value={t} />)}</datalist>

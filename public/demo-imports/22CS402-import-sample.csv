@@ -1,0 +1,6 @@
+Subject,Topic,Question,Option A,Option B,Option C,Option D,Correct Answer,Difficulty,Marks,Negative Marks
+Database Management Systems,SQL,Which SQL statement is used to add new rows to a table?,UPDATE,INSERT,ALTER,CREATE,B,Easy,2,0
+Database Management Systems,Keys,A candidate key is:,Any attribute with duplicates,A minimal superkey,Always a foreign key,A composite of all attributes,B,Medium,2,0
+Database Management Systems,Transactions,Which statement permanently saves the changes of a transaction?,ROLLBACK,SAVEPOINT,COMMIT,GRANT,C,Medium,2,0
+Database Management Systems,Normalization,First Normal Form (1NF) requires that every attribute holds:,Atomic values,Foreign keys,Unique values,Numeric values,A,Easy,2,0
+Database Management Systems,Security,Which SQL command gives a user privileges on a table?,REVOKE,GRANT,ALLOW,PERMIT,B,Medium,2,0

@@ -13,13 +13,18 @@ import StatusBadge from '../../components/common/StatusBadge';
 import Tabs, { TabPanel } from '../../components/common/Tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useToast } from '../../components/common/Toast';
-import { examRandomizerService } from '../../services/examRandomizerService';
 import { studentRosterService } from '../../services/studentRosterService';
 import { activityLogService } from '../../services/activityLogService';
 import { PATTERN_LABELS } from '../../utils/randomizationEngine';
 import { assignPatternForCandidate } from '../../utils/patternAssignment';
 import { formatDateTime } from '../../utils/format';
 import { useAuth } from '../../context/AuthContext';
+import { useAdminExamContext } from '../../utils/useAdminExamContext';
+import { ExamSwitcher, ScopeDenied } from '../../components/admin/ExamScope';
+import { scopedQuestionBank } from '../../services/scopedQuestionBank';
+import { defaultSubjectMeta } from '../../services/examRegistry';
+import { DEFAULT_EXAM_CODE } from '../../services/adminScope';
+import { subjectByCode } from '../../data/subjectCatalog';
 
 const LETTERS = ['A', 'B', 'C', 'D'];
 const CHECK_LABELS = {
@@ -41,11 +46,11 @@ function metaToForm(meta) {
   };
 }
 
-export default function ExamManagementPage() {
+function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { notify } = useToast();
-  const [examState, setExamState] = useState(() => examRandomizerService.getExamState());
+  const [examState, setExamState] = useState(() => service.getExamState());
   const [activeTab, setActiveTab] = useState('configuration');
   const [selectedPattern, setSelectedPattern] = useState('A');
   const [showAnswerKey, setShowAnswerKey] = useState(false);
@@ -54,7 +59,7 @@ export default function ExamManagementPage() {
   const [configError, setConfigError] = useState('');
 
   const roster = useMemo(() => studentRosterService.list(), []);
-  const attempts = examRandomizerService.listAttempts();
+  const attempts = service.listAttempts();
   const attemptByStudent = {};
   attempts.forEach((a) => { if (!attemptByStudent[a.studentIdentifier]) attemptByStudent[a.studentIdentifier] = a; });
 
@@ -79,19 +84,19 @@ export default function ExamManagementPage() {
   const runConfirmed = () => {
     try {
       if (confirm === 'regenerate') {
-        refresh(examRandomizerService.regeneratePatterns());
+        refresh(service.regeneratePatterns());
         log('Regenerated patterns A–J');
         notify('Ten new patterns (A–J) were generated and verified.');
       } else if (confirm === 'publish') {
-        refresh(examRandomizerService.publishExam());
+        refresh(service.publishExam());
         log('Published examination');
         notify('Examination published. Eligible candidates can now start.');
       } else if (confirm === 'unpublish') {
-        refresh(examRandomizerService.unpublishExam());
+        refresh(service.unpublishExam());
         log('Unpublished examination', 'Returned to draft', 'warning');
         notify('Examination returned to draft and hidden from candidates.', 'info');
       } else if (confirm === 'reset') {
-        refresh(examRandomizerService.resetToDefaults());
+        refresh(service.resetToDefaults());
         log('Reset examination to the standard question set');
         notify('Reset to the standard 25 questions and regenerated patterns.', 'info');
       }
@@ -105,7 +110,7 @@ export default function ExamManagementPage() {
     event.preventDefault();
     setConfigError('');
     try {
-      refresh(examRandomizerService.updateExamMeta(configForm));
+      refresh(service.updateExamMeta(configForm));
       log('Updated examination configuration');
       notify('Examination configuration saved.');
     } catch (error) {
@@ -149,6 +154,7 @@ export default function ExamManagementPage() {
         )}
         actions={(
           <>
+            <ExamSwitcher summaries={summaries} value={examCode} onChange={selectExam} />
             <Button variant="secondary" icon={RefreshCw} onClick={() => setConfirm('regenerate')}>Regenerate patterns</Button>
             {examState.isPublished ? (
               <Button variant="secondary" icon={Lock} onClick={() => setConfirm('unpublish')}>Unpublish</Button>
@@ -247,8 +253,8 @@ export default function ExamManagementPage() {
             action={(
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="secondary" icon={showAnswerKey ? EyeOff : Eye} onClick={() => setShowAnswerKey((v) => !v)}>{showAnswerKey ? 'Hide key' : 'Show key'}</Button>
-                <Button size="sm" variant="secondary" icon={RotateCcw} onClick={() => setConfirm('reset')}>Reset to standard</Button>
-                <Button size="sm" onClick={() => navigate('/admin/questions')}>Change in Question Bank</Button>
+                {isDefaultExam && <Button size="sm" variant="secondary" icon={RotateCcw} onClick={() => setConfirm('reset')}>Reset to standard</Button>}
+                <Button size="sm" onClick={() => navigate(`/admin/questions?exam=${examCode}`)}>Change in Question Bank</Button>
               </div>
             )}
           >
@@ -461,5 +467,92 @@ export default function ExamManagementPage() {
         description={confirmCopy.text}
       />
     </div>
+  );
+}
+
+/** Create a subject examination (draft) from that subject's question bank. */
+function CreateExamPanel({ service, examCode, scope, summaries, selectExam, onCreated }) {
+  const { user } = useAuth();
+  const { notify } = useToast();
+  const subject = subjectByCode(examCode);
+  const subjectQuestions = scopedQuestionBank(scope).getQuestions()
+    .filter((q) => q.subject === subject.title)
+    .sort((a, b) => a.id - b.id);
+  const defaults = defaultSubjectMeta(examCode);
+  const [form, setForm] = useState({ courseTitle: defaults.courseTitle, examDate: '', durationMinutes: defaults.durationMinutes });
+  const [error, setError] = useState('');
+
+  const create = (event) => {
+    event.preventDefault();
+    setError('');
+    const minutes = Number(form.durationMinutes);
+    if (!Number.isInteger(minutes) || minutes < 5 || minutes > 300) { setError('Duration must be a whole number between 5 and 300 minutes.'); return; }
+    if (subjectQuestions.length < 25) { setError(`At least 25 ${subject.title} questions are needed (${subjectQuestions.length} in the bank).`); return; }
+    try {
+      service.createExam(
+        { ...defaults, courseTitle: form.courseTitle.trim() || defaults.courseTitle, examDate: form.examDate.trim() || 'To be announced', durationMinutes: minutes },
+        subjectQuestions.slice(0, 25).map((q) => ({
+          id: Number(q.id), text: q.statement, options: [...q.options], correctOption: Number(q.correctOption),
+          subject: q.subject, topic: q.topic, difficulty: q.difficulty, marks: Number(q.marks), negativeMarks: Number(q.negativeMarks),
+        })),
+      );
+      activityLogService.log({ action: 'Created examination', category: 'exam', actor: user, target: examCode, details: subject.title });
+      notify(`${examCode} created as a draft with 10 patterns (${examCode}-A … -J).`);
+      onCreated();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Examinations"
+        title={subject.title}
+        meta={<span className="rounded-sm border border-slate-200 bg-white px-2 py-0.5 font-mono font-bold text-[#1E3A5F]">{examCode}</span>}
+        description="No examination exists for this subject yet. Create it from this subject's question bank."
+        actions={<ExamSwitcher summaries={summaries} value={examCode} onChange={selectExam} />}
+      />
+      <Card title="Create examination" subtitle={`Uses the first 25 of ${subjectQuestions.length} ${subject.short} questions; change the set later from the Question Bank.`} className="max-w-2xl">
+        {error && <Alert tone="danger" className="mb-4">{error}</Alert>}
+        <form onSubmit={create} className="grid gap-4 sm:grid-cols-2">
+          <InputField className="sm:col-span-2" label="Examination title" value={form.courseTitle} onChange={(e) => setForm({ ...form, courseTitle: e.target.value })} />
+          <InputField label="Examination date" placeholder="e.g. 05 Dec 2026" value={form.examDate} onChange={(e) => setForm({ ...form, examDate: e.target.value })} />
+          <InputField label="Duration (minutes)" type="number" min="5" max="300" value={form.durationMinutes} onChange={(e) => setForm({ ...form, durationMinutes: e.target.value })} />
+          <div className="flex justify-end sm:col-span-2">
+            <Button type="submit" icon={Send}>Create examination</Button>
+          </div>
+        </form>
+      </Card>
+    </div>
+  );
+}
+
+export default function ExamManagementPage() {
+  const { scope, examCode, allowed, service, selectExam, summaries } = useAdminExamContext();
+  const [, setCreatedVersion] = useState(0);
+  if (!allowed || !service) return <ScopeDenied examCode={examCode} scope={scope} />;
+  if (!service.exists()) {
+    return (
+      <CreateExamPanel
+        key={examCode}
+        service={service}
+        examCode={examCode}
+        scope={scope}
+        summaries={summaries}
+        selectExam={selectExam}
+        onCreated={() => setCreatedVersion((v) => v + 1)}
+      />
+    );
+  }
+  return (
+    <ExamConsole
+      key={examCode}
+      service={service}
+      examCode={examCode}
+      summaries={summaries}
+      selectExam={selectExam}
+      isDefaultExam={examCode === DEFAULT_EXAM_CODE}
+    />
   );
 }

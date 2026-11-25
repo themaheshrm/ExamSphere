@@ -1,11 +1,13 @@
 import { readJson, writeJson, makeId, emitChange } from './localStore.js';
 import { INSTITUTION } from '../utils/constants.js';
+import { DEMO_ADMINS } from '../data/demoAdmins.js';
 
 const USERS_KEY = 'examsphere_platform_users_v1';
 const SETTINGS_KEY = 'examsphere_platform_settings_v1';
 // Retired multi-institution registry (sample tenants); purged on first load.
 const LEGACY_INSTITUTIONS_KEY = 'examsphere_institutions_v1';
 const DRAIT_ID = 'inst-drait';
+const DEMO_ADMINS_ADDED_KEY = 'examsphere_demo_admins_added_v1';
 
 const SEED_USERS = [
   { id: 'usr-admin-1', name: 'Dr. Ramesh B.', email: 'admin@drait.edu.in', role: 'admin', staffId: 'ADM-8942', status: 'Active', createdAt: '2025-06-02T09:00:00.000Z' },
@@ -44,6 +46,30 @@ function purgeLegacyInstitutionData() {
 }
 purgeLegacyInstitutionData();
 
+/**
+ * Lists the subject-scoped demo administrators (ADMIN001–005) in the staff
+ * directory once, without touching existing records. Directory entries only:
+ * sign-in is through Supabase accounts created by scripts/provision-demo-admins.mjs.
+ */
+function addDemoAdminsOnce(users) {
+  if (readJson(DEMO_ADMINS_ADDED_KEY, false)) return users;
+  const known = new Set(users.map((u) => String(u.staffId || '').toUpperCase()));
+  const added = DEMO_ADMINS.filter((a) => !known.has(a.staffId)).map((a) => ({
+    id: `usr-demo-${a.staffId.toLowerCase()}`,
+    name: a.name,
+    email: a.email,
+    role: 'admin',
+    staffId: a.staffId,
+    status: 'Active',
+    demo: true,
+    createdAt: '2026-11-24T09:00:00.000Z',
+  }));
+  const next = [...users, ...added];
+  writeJson(USERS_KEY, next);
+  writeJson(DEMO_ADMINS_ADDED_KEY, true);
+  return next;
+}
+
 /** Super-admin data for the Dr. AIT deployment: staff accounts and platform settings. */
 export const platformService = {
   /** The single institution this deployment serves (read-only). */
@@ -53,9 +79,9 @@ export const platformService = {
 
   listUsers() {
     const saved = readJson(USERS_KEY, null);
-    if (Array.isArray(saved)) return saved;
-    writeJson(USERS_KEY, SEED_USERS);
-    return SEED_USERS.map((u) => ({ ...u }));
+    const users = Array.isArray(saved) ? saved : SEED_USERS.map((u) => ({ ...u }));
+    if (!Array.isArray(saved)) writeJson(USERS_KEY, users);
+    return addDemoAdminsOnce(users);
   },
 
   saveUser(input) {

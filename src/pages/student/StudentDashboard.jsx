@@ -22,6 +22,7 @@ import EmptyState from '../../components/common/EmptyState';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useToast } from '../../components/common/Toast';
 import { examRandomizerService } from '../../services/examRandomizerService';
+import { publishedSubjectExams } from '../../services/examRegistry';
 import { studentRosterService } from '../../services/studentRosterService';
 import { notificationService } from '../../services/notificationService';
 import { platformService } from '../../services/platformService';
@@ -85,6 +86,25 @@ export default function StudentDashboard() {
   const cbtLabel = { Withheld: 'Eligibility withheld', 'In progress': 'Attempt in progress', Submitted: 'Submitted', Live: 'Open now', Draft: 'Under moderation' }[cbtState];
   const canStart = eligible && (activeAttempt || (isCbtPublished && !submittedResult));
   const otherExams = upcomingExams.filter((e) => e.courseCode !== meta.courseCode);
+
+  // Published subject examinations (created by subject-scoped admins). Each has
+  // its own patterns and results; the candidate's paper and grading come from
+  // that examination's service.
+  const subjectExams = publishedSubjectExams().map(({ subject, service }) => {
+    const state = service.getExamState();
+    const mine = service.listAttempts().filter((a) => a.studentIdentifier === normalizedId);
+    const active = mine.find((a) => a.status === 'active');
+    const result = service.getStudentAttempt(normalizedId);
+    const status = !eligible ? 'Withheld' : active ? 'In progress' : result ? 'Submitted' : 'Live';
+    return { subject, meta: state.meta, active, result, status };
+  });
+  const subjectAction = (exam, size = 'sm') => {
+    if (!eligible) return <Button size={size} variant="secondary" disabled>Not eligible</Button>;
+    if (exam.active) return <Button size={size} onClick={() => navigate(`/student/exam?exam=${exam.subject.code}`)} rightIcon={ArrowRight}>Resume</Button>;
+    if (exam.result) return <Button size={size} variant="secondary" onClick={() => go('results')}>View submission</Button>;
+    return <Button size={size} onClick={() => navigate(`/student/exam?exam=${exam.subject.code}`)} rightIcon={ArrowRight}>Start</Button>;
+  };
+  const subjectStatusLabel = { Withheld: 'Eligibility withheld', 'In progress': 'Attempt in progress', Submitted: 'Submitted', Live: 'Open now' };
 
   const go = (tab) => setSearchParams({ tab });
 
@@ -165,6 +185,26 @@ export default function StudentDashboard() {
               </div>
             )}
           </section>
+
+          {subjectExams.length > 0 && (
+            <Card title="Subject examinations" subtitle="Published by your subject examiners" bodyClassName="p-0">
+              <ul className="divide-y divide-slate-100">
+                {subjectExams.map((exam) => (
+                  <li key={exam.subject.code} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs font-semibold text-[#1E3A5F]">{exam.meta.courseCode}</span>
+                        <StatusBadge status={exam.status} size="sm">{subjectStatusLabel[exam.status]}</StatusBadge>
+                      </p>
+                      <p className="text-sm font-medium text-slate-900">{exam.meta.courseTitle}</p>
+                      <p className="text-[11px] text-slate-500">{exam.meta.totalQuestions} MCQs · {exam.meta.totalMarks} marks · {exam.meta.durationMinutes} min</p>
+                    </div>
+                    <div className="shrink-0">{subjectAction(exam)}</div>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
 
           <section className="grid grid-cols-3 gap-2 sm:gap-4" aria-label="Summary">
             {[
@@ -255,6 +295,20 @@ export default function StudentDashboard() {
                 <TableCell className="hidden sm:table-cell"><StatusBadge status={cbtState} size="sm">{cbtLabel}</StatusBadge></TableCell>
                 <TableCell align="right"><div className="flex justify-end">{examAction('sm')}</div></TableCell>
               </TableRow>
+              {subjectExams.map((exam) => (
+                <TableRow key={exam.subject.code}>
+                  <TableCell>
+                    <p className="font-mono text-xs font-semibold text-[#1E3A5F]">{exam.meta.courseCode}</p>
+                    <p className="font-medium text-slate-900">{exam.meta.courseTitle}</p>
+                    <p className="text-[11px] text-slate-500 sm:hidden">{exam.meta.examDate || 'Open'} · {exam.meta.durationMinutes} min</p>
+                    <p className="mt-1 sm:hidden"><StatusBadge status={exam.status} size="sm">{subjectStatusLabel[exam.status]}</StatusBadge></p>
+                  </TableCell>
+                  <TableCell className="hidden sm:table-cell">{exam.meta.examDate || 'Open'}<span className="block text-[11px] text-slate-500">{exam.meta.durationMinutes} min</span></TableCell>
+                  <TableCell className="hidden md:table-cell">{activeExam.terminal}</TableCell>
+                  <TableCell className="hidden sm:table-cell"><StatusBadge status={exam.status} size="sm">{subjectStatusLabel[exam.status]}</StatusBadge></TableCell>
+                  <TableCell align="right"><div className="flex justify-end">{subjectAction(exam)}</div></TableCell>
+                </TableRow>
+              ))}
               {otherExams.map((exam) => (
                 <TableRow key={exam.id}>
                   <TableCell>
@@ -298,8 +352,31 @@ export default function StudentDashboard() {
               )}
             </Card>
           ) : (
-            <Alert tone="info">No computer-based test has been submitted yet this session.</Alert>
+            !subjectExams.some((e) => e.result) && <Alert tone="info">No computer-based test has been submitted yet this session.</Alert>
           )}
+
+          {subjectExams.filter((e) => e.result).map(({ subject, result }) => (
+            <Card key={subject.code} title={`${result.courseCode} — ${result.courseTitle}`} subtitle={`Submitted ${formatDateTime(result.submittedAt)} · Paper ${result.paperCode}`} action={<Badge variant="primary">Provisional</Badge>}>
+              {showScore ? (
+                <div className="grid gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 sm:grid-cols-5">
+                  {[
+                    ['Score', `${result.score} / ${result.maxScore}`],
+                    ['Percentage', `${result.percentage}%`],
+                    ['Result', result.passed ? 'Pass' : 'Below pass mark'],
+                    ['Correct', result.correctCount],
+                    ['Not attempted', result.unattemptedCount],
+                  ].map(([k, v]) => (
+                    <div key={k} className="bg-white p-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{k}</p>
+                      <p className={`mt-0.5 text-sm font-semibold tabular-nums ${k === 'Result' ? (result.passed ? 'text-emerald-700' : 'text-rose-700') : 'text-slate-900'}`}>{v}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-700">Your answer sheet has been recorded. Results will be published by the {INSTITUTION.office}.</p>
+              )}
+            </Card>
+          ))}
 
           <Card title="Statement of marks" subtitle={`CGPA ${studentInfo.currentCgpa} · SGPA ${studentInfo.currentSgpa} · Credits ${studentInfo.totalCreditsEarned}`} bodyClassName="p-0">
             <Table className="rounded-none border-0">

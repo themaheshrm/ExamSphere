@@ -1,0 +1,6 @@
+Subject,Topic,Question,Option A,Option B,Option C,Option D,Correct Answer,Difficulty,Marks,Negative Marks
+Data Structures and Algorithms,Trees,How many edges does a tree with n vertices have?,n,n - 1,n + 1,2n,B,Medium,2,0
+Data Structures and Algorithms,Sorting,What is the worst-case time complexity of heapsort?,O(n),O(n log n),O(n²),O(log n),B,Medium,2,0
+Data Structures and Algorithms,Graphs,Which algorithm computes shortest paths between all pairs of vertices?,Floyd–Warshall,Kruskal,Prim,Topological sort,A,Hard,2,0
+Data Structures and Algorithms,Hashing,The load factor of a hash table is defined as:,Number of buckets / number of keys,Number of keys / number of buckets,Number of collisions,Size of each key,B,Easy,2,0
+Data Structures and Algorithms,Stacks & Queues,A circular queue avoids which problem of a simple array-based queue?,Overflow on every insert,Wasted space at the front after dequeues,Duplicate elements,Slow searching,B,Medium,2,0

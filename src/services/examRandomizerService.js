@@ -78,7 +78,20 @@ function makeAttemptId() {
 }
 
 class ExamRandomizerService {
-  constructor() {
+  /**
+   * @param {object} [options]
+   * @param {string} [options.storageKey]  exam state key (default: the 22CS601 exam)
+   * @param {string} [options.resultsKey]  per-student provisional results key
+   * @param {string} [options.examId]      meta.id of this exam (scopes attempts)
+   * @param {Function} [options.makeState] seed factory for a new exam state
+   * @param {boolean} [options.autoCreate] create the exam on first use (false for subject exams)
+   */
+  constructor(options = {}) {
+    this.storageKey = options.storageKey ?? STORAGE_KEY;
+    this.resultsKey = options.resultsKey ?? ATTEMPTS_STORAGE_KEY;
+    this.examId = options.examId ?? examMeta.id;
+    this.makeState = options.makeState ?? makeExamState;
+    this.autoCreate = options.autoCreate ?? true;
     this.memoryExamState = null;
     this.memoryPaperAttempts = { attempts: {}, activeByStudent: {} };
     this.memoryStudentResults = {};
@@ -86,7 +99,7 @@ class ExamRandomizerService {
   }
 
   initStore() {
-    const stored = safeStorageRead(STORAGE_KEY);
+    const stored = safeStorageRead(this.storageKey);
     if (stored) {
       try {
         this.memoryExamState = JSON.parse(stored);
@@ -96,12 +109,13 @@ class ExamRandomizerService {
       }
     }
 
-    this.memoryExamState = makeExamState();
-    safeStorageWrite(STORAGE_KEY, JSON.stringify(this.memoryExamState));
+    if (!this.autoCreate) return; // subject exams exist only once an admin creates them
+    this.memoryExamState = this.makeState();
+    safeStorageWrite(this.storageKey, JSON.stringify(this.memoryExamState));
   }
 
   getExamState() {
-    const stored = safeStorageRead(STORAGE_KEY);
+    const stored = safeStorageRead(this.storageKey);
     if (stored) {
       try {
         this.memoryExamState = JSON.parse(stored);
@@ -111,20 +125,58 @@ class ExamRandomizerService {
       }
     }
 
-    if (!this.memoryExamState) this.memoryExamState = makeExamState();
+    if (!this.memoryExamState && this.autoCreate) this.memoryExamState = this.makeState();
     return this.memoryExamState;
+  }
+
+  /** Whether this examination has been created (always true for 22CS601). */
+  exists() {
+    return Boolean(this.getExamState());
+  }
+
+  /**
+   * Create a subject examination as a draft from 25 master questions and
+   * generate its 10 patterns (paper codes <courseCode>-A … -J).
+   */
+  createExam(meta, questions) {
+    if (this.exists()) throw new Error('This examination already exists.');
+    if (!Array.isArray(questions) || questions.length !== 25) {
+      throw new Error('Examination requires exactly 25 questions.');
+    }
+    const generated = generate10ExamPatterns(questions, { paperCodePrefix: meta.courseCode });
+    const marks = questions.map((q) => Number(q.marks ?? 2));
+    const state = {
+      meta: {
+        ...meta,
+        id: this.examId,
+        totalQuestions: 25,
+        totalMarks: marks.reduce((sum, m) => sum + m, 0),
+        marksPerQuestion: marks.every((m) => m === marks[0]) ? marks[0] : null,
+        negativeMarking: questions.some((q) => Number(q.negativeMarks) > 0),
+      },
+      masterQuestions: questions,
+      patterns: generated.patterns,
+      verificationReport: generated.verificationReport,
+      status: 'Draft',
+      isPublished: false,
+      publishedAt: null,
+      createdAt: new Date().toISOString(),
+      lastGeneratedAt: generated.generatedAt,
+    };
+    this.saveExamState(state);
+    return state;
   }
 
   saveExamState(state) {
     this.memoryExamState = state;
-    if (!safeStorageWrite(STORAGE_KEY, JSON.stringify(state))) {
+    if (!safeStorageWrite(this.storageKey, JSON.stringify(state))) {
       console.warn('Exam state is only available in memory; browser storage is unavailable.');
     }
   }
 
   getMasterQuestions() {
     const state = this.getExamState();
-    return state.masterQuestions || examQuestions;
+    return state?.masterQuestions || [];
   }
 
   setMasterQuestions(newQuestions) {
@@ -132,7 +184,7 @@ class ExamRandomizerService {
       throw new Error('Examination requires exactly 25 questions.');
     }
     const state = this.getExamState();
-    const generated = generate10ExamPatterns(newQuestions);
+    const generated = generate10ExamPatterns(newQuestions, { paperCodePrefix: state.meta.courseCode });
     const fallbackMarks = Number(state.meta.marksPerQuestion) || 2;
     const questionMarks = newQuestions.map((question) => Number(question.marks ?? fallbackMarks));
     const commonMarks = questionMarks.every((marks) => marks === questionMarks[0]);
@@ -152,7 +204,7 @@ class ExamRandomizerService {
 
   regeneratePatterns() {
     const state = this.getExamState();
-    const generated = generate10ExamPatterns(state.masterQuestions || examQuestions);
+    const generated = generate10ExamPatterns(state.masterQuestions, { paperCodePrefix: state.meta.courseCode });
     state.patterns = generated.patterns;
     state.verificationReport = generated.verificationReport;
     state.lastGeneratedAt = generated.generatedAt;
@@ -215,8 +267,8 @@ class ExamRandomizerService {
   }
 
   resetToDefaults() {
-    safeStorageRemove(STORAGE_KEY);
-    this.memoryExamState = makeExamState();
+    safeStorageRemove(this.storageKey);
+    this.memoryExamState = this.makeState();
     this.saveExamState(this.memoryExamState);
     return this.memoryExamState;
   }
@@ -273,6 +325,7 @@ class ExamRandomizerService {
     if (!normalizedId) return null;
 
     const state = this.getExamState();
+    if (!state) return null;
     const attemptKey = `${state.meta.id}:${normalizedId}`;
     const registry = this.readPaperAttempts();
     const activeAttemptId = registry.activeByStudent[attemptKey];
@@ -316,7 +369,7 @@ class ExamRandomizerService {
 
     const registry = this.readPaperAttempts();
     const attempt = registry.attempts[attemptId];
-    if (!attempt || attempt.studentIdentifier !== normalizedId) {
+    if (!attempt || attempt.studentIdentifier !== normalizedId || attempt.meta?.id !== this.examId) {
       throw new Error('The assigned exam attempt could not be found for this student.');
     }
     if (attempt.status !== 'active') {
@@ -406,6 +459,7 @@ class ExamRandomizerService {
   listAttempts() {
     const registry = this.readPaperAttempts();
     return Object.values(registry.attempts || {})
+      .filter((attempt) => attempt.meta?.id === this.examId)
       .map((attempt) => ({
         attemptId: attempt.attemptId,
         studentIdentifier: attempt.studentIdentifier,
@@ -438,7 +492,7 @@ class ExamRandomizerService {
     const registry = this.readPaperAttempts();
     const removed = [];
     Object.values(registry.attempts || {}).forEach((attempt) => {
-      if (!ids.includes(attempt.studentIdentifier)) return;
+      if (!ids.includes(attempt.studentIdentifier) || attempt.meta?.id !== this.examId) return;
       removed.push(attempt.attemptId);
       delete registry.attempts[attempt.attemptId];
       if (registry.activeByStudent[attempt.attemptKey] === attempt.attemptId) delete registry.activeByStudent[attempt.attemptKey];
@@ -449,29 +503,29 @@ class ExamRandomizerService {
     if (!this.savePaperAttempts(registry)) throw new Error('Browser storage is unavailable.');
 
     let results = this.memoryStudentResults;
-    const stored = safeStorageRead(ATTEMPTS_STORAGE_KEY);
+    const stored = safeStorageRead(this.resultsKey);
     if (stored) {
       try { results = JSON.parse(stored); } catch { /* retain memory copy */ }
     }
     ids.forEach((id) => { delete results[id]; });
     this.memoryStudentResults = results;
-    safeStorageWrite(ATTEMPTS_STORAGE_KEY, JSON.stringify(results));
+    safeStorageWrite(this.resultsKey, JSON.stringify(results));
     return removed.length;
   }
 
   saveStudentAttempt(studentIdentifier, result) {
     let attempts = this.memoryStudentResults;
-    const stored = safeStorageRead(ATTEMPTS_STORAGE_KEY);
+    const stored = safeStorageRead(this.resultsKey);
     if (stored) {
       try { attempts = JSON.parse(stored); } catch { /* retain memory copy */ }
     }
     attempts[studentIdentifier] = result;
     this.memoryStudentResults = attempts;
-    safeStorageWrite(ATTEMPTS_STORAGE_KEY, JSON.stringify(attempts));
+    safeStorageWrite(this.resultsKey, JSON.stringify(attempts));
   }
 
   getStudentAttempt(studentIdentifier) {
-    const stored = safeStorageRead(ATTEMPTS_STORAGE_KEY);
+    const stored = safeStorageRead(this.resultsKey);
     if (stored) {
       try {
         this.memoryStudentResults = JSON.parse(stored);
@@ -483,4 +537,7 @@ class ExamRandomizerService {
   }
 }
 
+export { ExamRandomizerService };
+
+/** The institution-wide 22CS601 examination (unchanged storage keys and seed). */
 export const examRandomizerService = new ExamRandomizerService();

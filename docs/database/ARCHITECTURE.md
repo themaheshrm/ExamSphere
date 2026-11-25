@@ -1,7 +1,7 @@
 # ExamSphere: Supabase Database Architecture (proposal for approval)
 
 **Status:** migrations committed to the repo but **not yet applied** to the live Supabase project; follow §8 (starting with the read-only discovery step) before running them. No service-role key was used.
-**Validated:** the whole chain (`001 → 003 → 004 → 005 … 010`) replays cleanly on a local PostgreSQL 16 with a Supabase-like `auth` schema and roles. A second run of 005–010 is idempotent. An end-to-end workflow and adversarial test passes **84/84** assertions as anon, two students, a foreign admin, the institution admin and the super admin (`supabase/tests/`, run with `supabase/tests/run_local.sh`).
+**Validated:** the whole chain (`001 → 003 → 004 → 005 … 011`) replays cleanly on a local PostgreSQL 16 with a Supabase-like `auth` schema and roles. A second run of 005–011 is idempotent. The end-to-end workflow and adversarial tests pass **141/141** assertions as anon, two students, a foreign admin, two subject-scoped admins, the institution admin and the super admin (`supabase/tests/`, run with `supabase/tests/run_local.sh`).
 
 ```
 docs/database/ARCHITECTURE.md                  ← this document
@@ -15,7 +15,8 @@ supabase/
 │   ├── 007_exams_and_patterns.sql
 │   ├── 008_assignments_and_attempts.sql
 │   ├── 009_evaluation_and_results.sql
-│   └── 010_audit_reporting_and_jobs.sql
+│   ├── 010_audit_reporting_and_jobs.sql
+│   └── 011_subject_admin_scoping.sql            subject-scoped admins (§11)
 └── tests/                                       local-only shim + e2e security tests
     └── run_local.sh                             replay + test against a DISPOSABLE Postgres
 ```
@@ -285,11 +286,11 @@ sequenceDiagram
 | 2 | 001/002 | Preferably `supabase db pull` → commit the real baseline. Otherwise `supabase/migrations/001_baseline_reconstruction.sql` (a no-op on live, builds fresh projects). |
 | 3 | 003, 004 | Already applied on live; unchanged; needed for fresh replays. |
 | 4 | Seed | Insert the Dr. AIT `institutions` row (`1DA`) and departments, then backfill `profiles.institution_id` and `department_id`. **This must happen before 005 if any profile has an `institution_id` that doesn't exist**, or the new FK will fail. Step 0 shows this. |
-| 5 | 005 → 010 | In order, each in its own transaction (Supabase CLI does this). All idempotent. |
+| 5 | 005 → 011 | In order, each in its own transaction (Supabase CLI does this). All idempotent. 011 is only needed for subject-scoped admins (§11). |
 | 6 | pg_cron | Enable it in Dashboard → Extensions, then re-run section 5 of 010. |
 | 7 | Verify | `VALIDATE CONSTRAINT profiles_scoped_role_chk / profiles_student_usn_chk / profiles_identifier_format_chk` after cleanup. Turn off "Allow new users to sign up" in Auth settings. |
 
-Each migration depends on the one before it: 005 provides tenancy and helpers for 006 (the bank); 007 (exams and patterns) relies on 006; 008 (assignments and attempts) on 007; 009 (evaluation and results) on 008; 010 (audit and reports) on 009.
+Each migration depends on the one before it: 005 provides tenancy and helpers for 006 (the bank); 007 (exams and patterns) relies on 006; 008 (assignments and attempts) on 007; 009 (evaluation and results) on 008; 010 (audit and reports) on 009; 011 (subject-scoped admins) on 006–010.
 
 **Requirements:** PostgreSQL ≥ 15, for `security_invoker` views and `ON DELETE SET NULL (col)`. Supabase is on 15 or 17; check the step 0 output.
 
@@ -336,3 +337,27 @@ On approval, I will:
 - add a `seed.sql` for the Dr. AIT demo data;
 - add the `provision-users` Edge Function;
 - then integrate the frontend page by page.
+
+---
+
+## 11. Subject-scoped administrators (migration 011)
+
+Added for the five demo administrators `ADMIN001`–`ADMIN005` (one subject each; see `docs/DEMO_ADMINS.md`). **Not applied to any project**; review it with the rest of the chain.
+
+**Model.** A row in `public.subject_admins (admin_id, subject_id, institution_id)` makes an `admin` profile *subject-scoped*. It keeps every institution-admin capability for its own subjects and loses access to everything else. Admins with no rows (today's institution admins) and super admins behave exactly as before, so the Super Admin → Institution Admin hierarchy does not change. Only institution admins and super admins can write `subject_admins`; a trigger accepts only active admins of the subject's own institution.
+
+**Enforcement (server-side, independent of the client):**
+
+| Layer | What it does |
+|---|---|
+| RESTRICTIVE RLS (`*_subject_scope`) | AND-ed with the existing permissive policies (which are left unchanged). For a scoped admin, `SELECT` only returns rows of their subjects: `subjects`, `questions`, `question_answer_keys`, `exams`, `exam_questions`, `exam_patterns*`, `exam_assignments`, `exam_attempts`, `attempt_responses`, `attempt_events`, `exam_results`, `result_question_scores`, exam-specific `announcements`, and only their own `question_import_batches`, `activity_logs` and `audit_log` rows. |
+| Row triggers (`private.guard_subject_scope`) | `BEFORE INSERT/UPDATE/DELETE` on the same tables. They also fire inside the `SECURITY DEFINER` RPCs (`save_question`, `delete_question`, `import_questions`, `set_exam_questions`, `generate_exam_patterns`, `publish_exam`, `assign_*`, `close_exam`, …), so tampering with IDs in API calls cannot reach another subject. They also stop a scoped admin from composing an exam from another subject's questions, and from changing `profiles` (other than their own row), `student_details`, `departments` or `subject_admins`. |
+| Report RPCs | `get_exam_report`, `get_exam_item_analysis`, `get_exam_results_export` and `get_exam_verification_report` call `private.assert_can_manage_exam`. `get_student_performance` lists only in-scope subjects. `get_admin_dashboard` (institution totals) is refused to scoped admins. Bodies are otherwise identical to 007/010. |
+
+Students are unaffected: for any non-scoped caller, every check is a no-op.
+
+**Tests.** `supabase/tests/120_subject_admin_scope_test.sql` (57 assertions) covers:
+- **Own-subject work:** each scoped admin reads, creates, imports, composes, generates (10 patterns), publishes and reports on its own subject.
+- **Cross-subject denial:** every cross-subject read, write and report is denied, using a draft DBMS exam so that denials come from the scope guard and not from status rules.
+- **Escalation:** self-escalation is blocked (`subject_admins`, `profiles.role`).
+- **Hierarchy:** the institution admin and super admin keep full access.

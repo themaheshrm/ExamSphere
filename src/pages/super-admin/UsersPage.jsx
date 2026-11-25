@@ -10,6 +10,8 @@ import Pagination from '../../components/common/Pagination';
 import EmptyState from '../../components/common/EmptyState';
 import StatusBadge from '../../components/common/StatusBadge';
 import Badge from '../../components/common/Badge';
+import { demoAdmin } from '../../data/demoAdmins';
+import { subjectByCode } from '../../data/subjectCatalog';
 import Alert from '../../components/common/Alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useToast } from '../../components/common/Toast';
@@ -104,6 +106,12 @@ export default function UsersPage() {
                     <TableCell>
                       <p className="font-medium text-slate-900">{u.name}{isSelf(u) && <span className="ml-1 text-[11px] text-slate-500">(you)</span>}</p>
                       <p className="text-[11px] text-slate-500">{u.email}{u.staffId ? ` · ${u.staffId}` : ''}</p>
+                      {demoAdmin(u.staffId) && (
+                        <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600">
+                          <Badge size="sm" variant="primary">Demo</Badge>
+                          Subject: {subjectByCode(demoAdmin(u.staffId).subjectCode).code} · {subjectByCode(demoAdmin(u.staffId).subjectCode).title}
+                        </p>
+                      )}
                       <p className="mt-1 flex items-center gap-2 sm:hidden"><Badge size="sm" variant={u.role === 'super-admin' ? 'primary' : 'neutral'}>{u.role === 'super-admin' ? 'Super admin' : 'Exam office admin'}</Badge><StatusBadge status={u.status} size="sm" /></p>
                     </TableCell>
                     <TableCell className="hidden sm:table-cell"><Badge size="sm" variant={u.role === 'super-admin' ? 'primary' : 'neutral'}>{u.role === 'super-admin' ? 'Super admin' : 'Exam office admin'}</Badge></TableCell>
