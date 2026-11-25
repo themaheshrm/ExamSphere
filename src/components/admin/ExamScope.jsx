@@ -1,6 +1,8 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
+import { Spinner } from '../common/LoadingStates';
+import Alert from '../common/Alert';
 
 /** Examination selector shown in admin page headers (only exams in scope). */
 export function ExamSwitcher({ summaries, value, onChange }) {
@@ -71,4 +73,27 @@ export function ExamNotCreated({ eyebrow = 'Examinations', title, examCode, summ
       </div>
     </div>
   );
+}
+
+/**
+ * Common states for admin examination pages: loading, error, out of scope and
+ * "not created". Renders `children(ctx)` once the subject's exam is available.
+ */
+export function AdminExamGate({ ctx, eyebrow = 'Examinations', title, requireExam = true, children }) {
+  if (!ctx.ready && ctx.loading) {
+    return <div className="flex min-h-[40vh] items-center justify-center" role="status"><Spinner size="lg" /><span className="sr-only">Loading…</span></div>;
+  }
+  if (ctx.error && !ctx.ready) {
+    return (
+      <div className="space-y-4 py-6">
+        <Alert tone="danger" title="Could not load examination data">{ctx.error.message}</Alert>
+        <button type="button" onClick={ctx.reload} className="inline-flex h-9 items-center rounded-sm bg-[#1E3A5F] px-4 text-xs font-semibold text-white hover:bg-[#152A45]">Try again</button>
+      </div>
+    );
+  }
+  if (!ctx.allowed) return <ScopeDenied examCode={ctx.examCode} scope={ctx.scope} />;
+  if (requireExam && !ctx.exam) {
+    return <ExamNotCreated eyebrow={eyebrow} title={title} examCode={ctx.examCode} summaries={ctx.summaries} onSelect={ctx.selectExam} scope={ctx.scope} />;
+  }
+  return children(ctx);
 }

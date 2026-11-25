@@ -1,23 +1,20 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock, Eraser, Flag, LayoutGrid, Send, X,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { getExamService } from '../../services/examRegistry';
-import { DEFAULT_EXAM_CODE } from '../../services/adminScope';
-import { studentRosterService } from '../../services/studentRosterService';
-import { activityLogService } from '../../services/activityLogService';
-import { platformService } from '../../services/platformService';
-import { studentInfo } from '../../data/studentMockData';
-import { INSTITUTION } from '../../utils/constants';
+import { useSettings } from '../../context/SettingsContext';
+import { studentExamApi } from '../../services/api/studentExamApi';
+import { useAsync } from '../../utils/useAsync';
+import { INSTITUTION, USER_ROLES } from '../../utils/constants';
 import { formatDateTime } from '../../utils/format';
 import Modal from '../../components/common/Modal';
 import Button from '../../components/common/Button';
 import Alert from '../../components/common/Alert';
 import { InstitutionMark } from '../../components/public/PublicChrome';
 
-// ── Question states (unchanged values: they are persisted in sessionStorage) ──
+// ── Question states ──
 const Q_STATUS = {
   NOT_VISITED: 'not-visited',
   NOT_ANSWERED: 'not-answered',
@@ -46,14 +43,48 @@ function formatTime(totalSeconds) {
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-function readSaved(sessionKey) {
-  if (!sessionKey) return null;
+// Only the current question index lives in sessionStorage (a UI convenience);
+// answers, review flags and the timer come from the server on every load.
+function readIndex(key) {
   try {
-    const saved = sessionStorage.getItem(sessionKey);
-    return saved ? JSON.parse(saved) : null;
+    const value = Number(sessionStorage.getItem(key));
+    return Number.isInteger(value) && value >= 0 ? value : 0;
   } catch {
-    return null;
+    return 0;
   }
+}
+
+function statusFromResponse(r, index) {
+  const marked = Boolean(r?.markedForReview);
+  const selected = r?.selectedOption !== null && r?.selectedOption !== undefined;
+  if (marked) return selected ? Q_STATUS.MARKED_ANSWERED : Q_STATUS.MARKED;
+  if (selected) return Q_STATUS.ANSWERED;
+  if (r?.visited || index === 0) return Q_STATUS.NOT_ANSWERED;
+  return Q_STATUS.NOT_VISITED;
+}
+
+const isMarkedStatus = (s) => s === Q_STATUS.MARKED || s === Q_STATUS.MARKED_ANSWERED;
+
+/**
+ * Resolve the student's examination (`?exam=<course code>`) and start or resume
+ * the attempt on the server. The paper carries no answer key, option order or
+ * question ids; the same attempt resumes on any device.
+ */
+async function openAttempt(examParam) {
+  const exams = await studentExamApi.myExams();
+  const exam = examParam
+    ? exams.find((e) => e.courseCode === examParam || e.examCode === examParam)
+    : exams.find((e) => e.availability === 'in_progress') || exams.find((e) => e.availability === 'live');
+  if (!exam) {
+    return { kind: 'unavailable', message: 'This examination is not assigned to you, is not published yet, or your eligibility has been withheld by the examination office. Please contact the examination cell.' };
+  }
+  if (exam.availability === 'completed') return { kind: 'submitted', result: await studentExamApi.myResult(exam.examId) };
+  if (exam.availability === 'upcoming') return { kind: 'unavailable', message: `The examination opens at ${formatDateTime(exam.windowStart)}.` };
+  if (exam.availability === 'entry_closed') return { kind: 'unavailable', message: 'The entry window for this examination has closed.' };
+  if (exam.availability !== 'live' && exam.availability !== 'in_progress') return { kind: 'unavailable', message: 'This examination is closed.' };
+  const paper = await studentExamApi.start(exam.examId);
+  if (paper.status !== 'active') return { kind: 'submitted', result: await studentExamApi.myResult(exam.examId) };
+  return { kind: 'ready', paper };
 }
 
 /** Palette tile: colour + shape cue so status never relies on colour alone. */
@@ -90,83 +121,91 @@ function PaletteButton({ number, status, current, onClick, decorative = false })
 export default function ExamInterface() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [settings] = useState(() => platformService.getSettings());
+  const { settings } = useSettings();
   const [searchParams] = useSearchParams();
-  // `?exam=<code>` selects a subject examination; absent → the original 22CS601.
-  // Unknown codes resolve to no service, so no paper can be assigned.
-  const [examService] = useState(() => getExamService(searchParams.get('exam') || DEFAULT_EXAM_CODE));
+  const examParam = String(searchParams.get('exam') || '').trim().toUpperCase();
+  // Only student accounts receive a paper (defence in depth behind the route guard and RLS).
+  const isStudentAccount = user?.role === USER_ROLES.STUDENT;
+  const { data, error, loading, reload } = useAsync(
+    () => (isStudentAccount ? openAttempt(examParam) : Promise.resolve({ kind: 'unavailable', message: 'Examinations can only be taken from a student account.' })),
+    [user?.id, examParam, isStudentAccount],
+  );
 
-  // ── Student details ────────────────────────────────────────────────────────
-  const studentName = user?.name || studentInfo.name;
-  const studentUsn = user ? (user.usn || user.identifier || 'Student ID unavailable') : studentInfo.usn;
-  const studentIdentity = user
-    ? (user.usn || user.identifier || user.id || null)
-    : studentInfo.usn;
-  const [isEligible] = useState(() => !studentIdentity || studentRosterService.isEligible(studentIdentity));
-  // Prevent unintended retakes from the UI: a candidate with a submitted
-  // attempt for this course (and none in progress) sees their receipt instead.
-  const [alreadySubmitted] = useState(() => {
-    const id = String(studentIdentity ?? '').trim().toUpperCase();
-    if (!id) return false;
-    const courseCode = examService?.getExamState()?.meta.courseCode;
-    if (!courseCode) return false;
-    const own = examService.listAttempts().filter((a) => a.studentIdentifier === id && a.courseCode === courseCode);
-    return own.some((a) => a.status === 'submitted') && !own.some((a) => a.status === 'active');
-  });
+  if (data?.kind === 'ready') {
+    return <ExamSession key={data.paper.attemptId} paper={data.paper} user={user} settings={settings} navigate={navigate} />;
+  }
 
-  // ── Fetch Randomized Student Paper ─────────────────────────────────────────
-  // Returns null when unpublished or storage is unavailable; withheld
-  // candidates are stopped before an attempt is created.
-  const [studentExam] = useState(() => (isEligible && !alreadySubmitted ? examService?.getStudentExam(studentIdentity) ?? null : null));
-  const unavailableMessage = !studentIdentity
-    ? 'A verified student identifier is required before an exam attempt can be assigned.'
-    : !isEligible
-      ? 'Your eligibility for this examination has been withheld by the examination office. Please contact the examination cell.'
-      : alreadySubmitted
-        ? 'You have already submitted this examination. Your answer sheet is recorded; see Results & History for your submission.'
-      : 'The examination is not open, or this browser could not save a persistent attempt. Please contact the examination administrator.';
+  const submitted = data?.kind === 'submitted';
+  const title = loading && !data && !error ? 'Opening your examination…'
+    : error ? 'Examination could not be opened'
+      : submitted ? 'Examination already submitted' : 'Examination unavailable';
+  const message = loading && !data && !error ? 'Fetching your paper from the examination server.'
+    : error ? error.message
+      : submitted ? 'You have already submitted this examination. Your answer sheet is recorded; see Results for your submission.'
+        : data?.message;
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#F4F6F9] p-4">
+      <main className="w-full max-w-md rounded-sm border border-slate-200 bg-white p-6 text-center" aria-busy={loading && !data}>
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-sm border border-amber-200 bg-amber-50 text-amber-700">
+          {submitted ? <CheckCircle2 className="h-6 w-6" aria-hidden="true" /> : <AlertTriangle className="h-6 w-6" aria-hidden="true" />}
+        </div>
+        <h1 className="text-base font-semibold text-slate-900">{title}</h1>
+        <p className="mt-2 text-sm leading-relaxed text-slate-600" role={error ? 'alert' : 'status'}>{message}</p>
+        <p className="mt-3 text-xs text-slate-500">Help desk: {settings.supportEmail} · {settings.helplinePhone}</p>
+        <div className="mt-5 flex justify-center gap-2">
+          {error && <Button variant="secondary" onClick={reload}>Try again</Button>}
+          <Button onClick={() => navigate(submitted ? '/student?tab=results' : '/student')}>Return to student portal</Button>
+        </div>
+      </main>
+    </div>
+  );
+}
 
-  const questions = studentExam?.questions || [];
-  const sessionKey = studentExam ? `examsphere_attempt_${studentExam.attemptId}` : null;
+function ExamSession({ paper, user, settings, navigate }) {
+  const studentExam = paper;
+  const studentName = user?.name || 'Candidate';
+  const studentUsn = user?.usn || user?.identifier || 'Student ID unavailable';
+  const questions = useMemo(() => paper.questions || [], [paper.questions]);
+  const indexKey = `examsphere_attempt_index_${paper.attemptId}`;
 
-  // ── Restore saved draft or initialize ──────────────────────────────────────
+  // ── Restore from the server's saved responses ──────────────────────────────
   const [answers, setAnswers] = useState(() => {
-    const parsed = readSaved(sessionKey);
-    if (Array.isArray(parsed?.answers) && parsed.answers.length === questions.length) return parsed.answers;
-    return Array(questions.length).fill(null);
+    const byNo = Object.fromEntries((paper.responses || []).map((r) => [r.displayNumber, r]));
+    return questions.map((q) => byNo[q.displayNumber]?.selectedOption ?? null);
+  });
+  const [statuses, setStatuses] = useState(() => {
+    const byNo = Object.fromEntries((paper.responses || []).map((r) => [r.displayNumber, r]));
+    return questions.map((q, i) => statusFromResponse(byNo[q.displayNumber], i));
   });
   const answersRef = useRef(answers);
+  const statusesRef = useRef(statuses);
   useEffect(() => {
     answersRef.current = answers;
-  }, [answers]);
+    statusesRef.current = statuses;
+  }, [answers, statuses]);
 
-  const [statuses, setStatuses] = useState(() => {
-    const parsed = readSaved(sessionKey);
-    if (Array.isArray(parsed?.statuses) && parsed.statuses.length === questions.length) return parsed.statuses;
-    return questions.map((_, i) => (i === 0 ? Q_STATUS.NOT_ANSWERED : Q_STATUS.NOT_VISITED));
-  });
-
-  const [currentIndex, setCurrentIndex] = useState(() => {
-    const parsed = readSaved(sessionKey);
-    if (typeof parsed?.currentIndex === 'number' && parsed.currentIndex < questions.length) return parsed.currentIndex;
-    return 0;
-  });
+  const [currentIndex, setCurrentIndex] = useState(() => Math.min(readIndex(indexKey), Math.max(0, questions.length - 1)));
+  useEffect(() => {
+    try { sessionStorage.setItem(indexKey, String(currentIndex)); } catch { /* storage blocked: index resets to Q1 on reload */ }
+  }, [currentIndex, indexKey]);
 
   const question = questions[currentIndex];
 
-  // ── Timer (persisted to prevent refresh exploitation) ──────────────────────
-  const [timeLeft, setTimeLeft] = useState(() => {
-    const parsed = readSaved(sessionKey);
-    if (typeof parsed?.timeLeft === 'number' && parsed.timeLeft > 0) return parsed.timeLeft;
-    return (studentExam?.durationMinutes || 90) * 60;
-  });
+  // ── Timer: the server's deadline is authoritative ──────────────────────────
+  const deadlineRef = useRef(null);
+  const [timeLeft, setTimeLeft] = useState(() => Math.max(0, Number(paper.remainingSeconds) || 0));
+  useEffect(() => {
+    deadlineRef.current = Date.now() + Math.max(0, Number(paper.remainingSeconds) || 0) * 1000;
+  }, [paper.remainingSeconds]);
 
   const timerRef = useRef(null);
   const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
   const [examSubmitted, setExamSubmitted] = useState(false);
   const [evaluationResult, setEvaluationResult] = useState(null);
   const [submitError, setSubmitError] = useState('');
   const [autoSubmitted, setAutoSubmitted] = useState(false);
+  const [saveState, setSaveState] = useState('saved'); // saved | saving | retrying | session
 
   // ── Screens / dialogs ──────────────────────────────────────────────────────
   const [showSubmitModal, setShowSubmitModal] = useState(false);
@@ -175,65 +214,129 @@ export default function ExamInterface() {
   const [showResultModal, setShowResultModal] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
 
-  // Single, idempotent submission path used by both manual and timed submit.
-  const finalizeSubmission = useCallback((source) => {
-    if (submittingRef.current || !studentExam) return;
+  const buildResponses = useCallback(() => questions.map((q, i) => ({
+    displayNumber: q.displayNumber,
+    selectedOption: answersRef.current[i],
+    markedForReview: isMarkedStatus(statusesRef.current[i]),
+    visited: statusesRef.current[i] !== Q_STATUS.NOT_VISITED,
+  })), [questions]);
+
+  // Single, idempotent submission path used by manual submit, the timer and
+  // the server reporting an auto-submission. Safe to retry after a failure.
+  const finalizeSubmission = useCallback(async (source) => {
+    if (submittingRef.current) return;
     submittingRef.current = true;
-    clearInterval(timerRef.current);
+    setSubmitting(true);
+    setSubmitError('');
     try {
-      const result = examService.evaluateSubmission(
-        studentIdentity,
-        answersRef.current,
-        studentExam.attemptId,
-      );
+      const result = await studentExamApi.submit(paper.attemptId, buildResponses());
+      clearInterval(timerRef.current);
       setEvaluationResult(result);
       setExamSubmitted(true);
-      setAutoSubmitted(source === 'timer');
+      setAutoSubmitted(result?.autoSubmitted || source === 'timer');
       setShowSubmitModal(false);
       setShowResultModal(true);
-      if (sessionKey) sessionStorage.removeItem(sessionKey);
-      activityLogService.log({
-        action: source === 'timer' ? 'Answer sheet auto-submitted (time expired)' : 'Answer sheet submitted',
-        category: 'attempt',
-        actor: user,
-        target: result.paperCode,
-        details: `${result.score} / ${result.maxScore}`,
-      });
-    } catch (error) {
+      try { sessionStorage.removeItem(indexKey); } catch { /* ignore */ }
+    } catch (err) {
       submittingRef.current = false;
-      setSubmitError(error.message || 'Your answers could not be submitted. Do not close this window; try again or inform the invigilator.');
+      setSubmitError(err.code === 'SESSION'
+        ? 'Your session has expired. Your saved answers are kept on the server: sign in again in a new tab, then return here and submit.'
+        : err.message || 'Your answers could not be submitted. Do not close this window; try again or inform the invigilator.');
       setShowSubmitModal(true);
+    } finally {
+      setSubmitting(false);
     }
-  }, [examService, studentIdentity, studentExam, sessionKey, user]);
+  }, [paper.attemptId, buildResponses, indexKey]);
 
-  // ── Sync attempt state to sessionStorage (survives page reloads) ───────────
+  // ── Autosave to the server (debounced, ordered, retried) ───────────────────
+  // `seq` follows the server clock so a resume on another device continues
+  // the sequence; the server ignores stale or reordered saves.
+  const clockOffset = useRef(0);
+  const seqRef = useRef(0);
+  const inFlight = useRef(false);
+  const dirty = useRef(false);
+  const retryTimer = useRef(null);
+  const retryDelay = useRef(2000);
+  const firstRender = useRef(true);
+  const flushRef = useRef(null);
   useEffect(() => {
-    if (!sessionKey || examSubmitted) return;
+    clockOffset.current = paper.serverNow ? new Date(paper.serverNow).getTime() - Date.now() : 0;
+  }, [paper.serverNow]);
+
+  const flush = useCallback(async () => {
+    if (submittingRef.current || examSubmitted) return;
+    if (inFlight.current) { dirty.current = true; return; }
+    if (!dirty.current) return;
+    dirty.current = false;
+    inFlight.current = true;
+    setSaveState('saving');
+    const seq = Math.max(seqRef.current + 1, Date.now() + clockOffset.current);
+    seqRef.current = seq;
+    let failed = false;
     try {
-      sessionStorage.setItem(
-        sessionKey,
-        JSON.stringify({ answers, statuses, currentIndex, timeLeft }),
-      );
-    } catch {
-      // Storage full or blocked: the in-memory attempt continues.
+      const res = await studentExamApi.save(paper.attemptId, buildResponses(), seq);
+      retryDelay.current = 2000;
+      if (typeof res?.remainingSeconds === 'number') deadlineRef.current = Date.now() + res.remainingSeconds * 1000;
+      if (res?.status === 'auto_submitted') { finalizeSubmission('timer'); return; }
+      setSaveState(dirty.current ? 'saving' : 'saved');
+    } catch (err) {
+      failed = true;
+      dirty.current = true;
+      if (err.code === 'SESSION') { setSaveState('session'); return; }
+      if (/already been submitted/i.test(err.message || '')) { finalizeSubmission('timer'); return; }
+      setSaveState('retrying');
+      clearTimeout(retryTimer.current);
+      retryTimer.current = setTimeout(() => { flushRef.current?.(); }, retryDelay.current);
+      retryDelay.current = Math.min(retryDelay.current * 2, 30000);
+    } finally {
+      inFlight.current = false;
+      // Changes made while this save was in flight go out next (failures wait for the retry timer).
+      if (dirty.current && !failed) setTimeout(() => flushRef.current?.(), 0);
     }
-  }, [answers, statuses, currentIndex, timeLeft, sessionKey, examSubmitted]);
+  }, [paper.attemptId, buildResponses, finalizeSubmission, examSubmitted]);
+  useEffect(() => { flushRef.current = flush; }, [flush]);
 
-  // ── Timer countdown (pure updater) ─────────────────────────────────────────
   useEffect(() => {
-    if (!studentExam || examSubmitted) return undefined;
+    if (firstRender.current) { firstRender.current = false; return undefined; }
+    if (examSubmitted) return undefined;
+    dirty.current = true;
+    const t = setTimeout(() => flushRef.current?.(), 600);
+    return () => clearTimeout(t);
+  }, [answers, statuses, examSubmitted]);
+
+  // Retry at once when the connection returns; save before the tab is hidden.
+  useEffect(() => {
+    const onOnline = () => { retryDelay.current = 2000; flushRef.current?.(); };
+    const onVisibility = () => {
+      if (examSubmitted) return;
+      if (document.visibilityState === 'hidden') { flushRef.current?.(); studentExamApi.logEvent(paper.attemptId, 'tab_hidden'); }
+      else studentExamApi.logEvent(paper.attemptId, 'tab_visible');
+    };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisibility);
+      clearTimeout(retryTimer.current);
+    };
+  }, [paper.attemptId, examSubmitted]);
+
+  // ── Timer countdown (derived from the server deadline) ─────────────────────
+  useEffect(() => {
+    if (examSubmitted) return undefined;
     timerRef.current = setInterval(() => {
-      setTimeLeft((prev) => Math.max(0, prev - 1));
+      setTimeLeft(Math.max(0, Math.round((deadlineRef.current - Date.now()) / 1000)));
     }, 1000);
     return () => clearInterval(timerRef.current);
-  }, [studentExam, examSubmitted]);
+  }, [examSubmitted]);
 
   // ── Auto-submit at zero (side effect lives in an effect, not an updater) ──
   const warnAt = (settings.timerWarningMinutes || 5) * 60;
   useEffect(() => {
-    if (!studentExam || examSubmitted) return;
-    if (timeLeft <= 0) finalizeSubmission('timer');
-  }, [timeLeft, studentExam, examSubmitted, finalizeSubmission]);
+    if (examSubmitted || timeLeft > 0) return undefined;
+    const t = setTimeout(() => finalizeSubmission('timer'), 0);
+    return () => clearTimeout(t);
+  }, [timeLeft, examSubmitted, finalizeSubmission]);
   // Screen-reader warning: text only changes when a threshold is crossed.
   const announcement = timeLeft <= 60
     ? 'One minute remaining. Your answers will be submitted automatically.'
@@ -310,7 +413,7 @@ export default function ExamInterface() {
   };
 
   // ── Keyboard shortcuts (inactive while a dialog or drawer is open) ─────────
-  const onExamScreen = Boolean(studentExam) && !showInstructionsModal && !examSubmitted;
+  const onExamScreen = !showInstructionsModal && !examSubmitted;
   useEffect(() => {
     if (!onExamScreen || showSubmitModal || showPalette) return undefined;
     const onKey = (e) => {
@@ -346,25 +449,6 @@ export default function ExamInterface() {
   const timerUrgent = timeLeft <= warnAt;
   const showPattern = settings.showPatternToCandidates;
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // GUARD: EXAM UNAVAILABLE
-  // ═══════════════════════════════════════════════════════════════════════════
-  if (!studentExam) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#F4F6F9] p-4">
-        <main className="w-full max-w-md rounded-sm border border-slate-200 bg-white p-6 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-sm border border-amber-200 bg-amber-50 text-amber-700">
-            <AlertTriangle className="h-6 w-6" aria-hidden="true" />
-          </div>
-          <h1 className="text-base font-semibold text-slate-900">{alreadySubmitted ? 'Examination already submitted' : 'Examination unavailable'}</h1>
-          <p className="mt-2 text-sm leading-relaxed text-slate-600">{unavailableMessage}</p>
-          <p className="mt-3 text-xs text-slate-500">Help desk: {settings.supportEmail} · {settings.helplinePhone}</p>
-          <Button className="mt-5" onClick={() => navigate('/student')}>Return to student portal</Button>
-        </main>
-      </div>
-    );
-  }
-
   const examHeader = (
     <header className="border-b border-[#152A45] bg-[#1E3A5F] text-white">
       <div className="flex h-14 items-center justify-between gap-3 px-4 sm:px-6">
@@ -376,6 +460,14 @@ export default function ExamInterface() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+          {!examSubmitted && (
+            <span
+              className={`hidden text-[11px] sm:inline ${saveState === 'saved' ? 'text-slate-300' : saveState === 'saving' ? 'text-slate-200' : 'font-semibold text-amber-300'}`}
+              role="status"
+            >
+              {{ saved: 'All answers saved', saving: 'Saving…', retrying: 'Offline — retrying save', session: 'Session expired — answers not saving' }[saveState]}
+            </span>
+          )}
           {!examSubmitted && (
             <div
               className={`flex items-center gap-2 rounded-sm px-3 py-1.5 font-mono text-sm font-bold tabular-nums ${
@@ -485,7 +577,7 @@ export default function ExamInterface() {
   // SCREEN 2: SUBMISSION RECEIPT & RESULT
   // ═══════════════════════════════════════════════════════════════════════════
   if (examSubmitted && showResultModal && evaluationResult) {
-    const showScore = settings.resultDisplay !== 'withheld';
+    const showScore = Boolean(evaluationResult.released && evaluationResult.score !== null);
     return (
       <div className="min-h-screen bg-[#F4F6F9]">
         {examHeader}
@@ -596,6 +688,14 @@ export default function ExamInterface() {
   return (
     <div className="flex min-h-screen flex-col bg-[#F4F6F9]">
       {examHeader}
+      {saveState === 'session' && (
+        <Alert tone="danger" title="Your session has expired" className="rounded-none border-x-0">
+          Answers you change now are not being saved. Sign in again in a new tab, then return here — your earlier answers are kept on the server.
+        </Alert>
+      )}
+      {saveState === 'retrying' && (
+        <p className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-900 sm:hidden" role="status">Connection problem — your latest answers will be saved when it returns.</p>
+      )}
 
       <div className="flex flex-1">
         <main className="flex min-w-0 flex-1 flex-col">
@@ -708,8 +808,8 @@ export default function ExamInterface() {
         maxWidth="max-w-md"
         footer={(
           <>
-            <Button variant="secondary" onClick={() => { setShowSubmitModal(false); setSubmitError(''); }}>Return to examination</Button>
-            <Button variant="success" icon={Send} onClick={() => finalizeSubmission('student')} data-autofocus>Submit answer sheet</Button>
+            <Button variant="secondary" disabled={submitting} onClick={() => { setShowSubmitModal(false); setSubmitError(''); }}>Return to examination</Button>
+            <Button variant="success" icon={Send} isLoading={submitting} onClick={() => finalizeSubmission('student')} data-autofocus>Submit answer sheet</Button>
           </>
         )}
       >

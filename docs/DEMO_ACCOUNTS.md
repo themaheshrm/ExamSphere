@@ -18,7 +18,7 @@ The source of truth for this table is `src/data/demoAccounts.js`.
 ## How they work (no special login path)
 
 - **Sign-in** goes through the normal ExamSphere login: Student tab → Student ID → `resolve_login_identifier` → Supabase `signInWithPassword` → verified `profiles` row (`role = student`, `usn = CS00x`). Nothing is bypassed.
-- **Exam and grading** use the existing ten patterns, the existing attempt snapshot and the existing grading code (`examRandomizerService`). Nothing is duplicated.
+- **Exam and grading** run in Supabase: the server generates the ten patterns, keeps the answer keys and grades each submission (`docs/EXAM_ENGINE_SUPABASE.md`). CS001–CS006 are pinned to patterns A–F by `pattern_pins` (migration 013).
 - **The only addition is an explicit pattern assignment.** `src/utils/patternAssignment.js` gives CS001…CS005 patterns A…E. Every other student keeps the existing USN-hash assignment. Because the assignment is fixed per account, a refresh, sign-out/sign-in or new browser tab always gives the same pattern. In the Supabase exam design this is `exam_assignments.pattern_id`.
 - **Admin view.** On **Admin → Candidates**, the six accounts carry a **Demo** badge and can be filtered with *All eligibility → Demo accounts*. **Reset demo attempts** clears attempts for these demo accounts only, so the demo can be rehearsed and run again. It refuses any non-demo ID.
 
@@ -95,9 +95,9 @@ where p.id = u.id;
 4. **Submit one paper with a few correct answers.** **Admin → Results & Reports → View** shows it was graded against that pattern's own key. Students never see the key.
 5. **After the demo,** use **Admin → Candidates → Reset demo attempts** to run it again.
 
-**Important for the current build:** the examination, attempts and results run in the browser's storage until the Supabase exam migrations (005–010) are wired in. **Run all five sign-ins in the same browser profile on the same computer.** A different browser has its own copy of the exam. Question order per pattern is identical everywhere, but option order and attempts are not shared.
+**Cross-device:** attempts, answers and results are stored in Supabase, so a student can resume on any browser or device. This needs migrations 003–013 and the catalogue seed applied (`docs/EXAM_ENGINE_SUPABASE.md` §3).
 
-**Security note for the current build:** students never see correct answers in the UI. But while the exam engine is browser-local, the answer key sits in the browser's storage, where a technical user could read it with developer tools. Server-side keys and row-level security (`supabase/migrations/005–010`, already tested with `supabase/tests`) remove this, and should be applied before any real examination.
+**Security:** answer keys never reach the browser. Papers carry no key, option permutation or question ids, and grading happens in the database.
 
 ## 4. Cleanup
 
@@ -163,4 +163,4 @@ unset SUPABASE_SERVICE_ROLE_KEY
 11. **Admin view:** *Results & Reports* lists CS006 on `22CS601-F` with the same score. A second attempt is blocked.
 12. **To run the walkthrough again:** Admin → Candidates → **Reset demo attempts**. This clears demo accounts only; patterns are unchanged.
 
-**Students never see an answer key or correct answers.** In this browser-local build the key is still in browser storage (see the security note in §3); applying the Supabase exam migrations removes that.
+**Students never see an answer key or correct answers.** Keys stay in admin-only tables protected by row-level security.

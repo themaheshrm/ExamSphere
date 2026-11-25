@@ -7,8 +7,13 @@
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 
-export function startMockSupabase({ tables, users = [], signupTrigger = true, port = 0, host = '127.0.0.1', serviceKey = null, functions = {} }) {
-  const state = { tables: structuredClone(tables), users: structuredClone(users), writes: [], requests: [], sessions: new Map(), refresh: new Map() };
+/**
+ * Options for a real-database run (tests/helpers/localSupabase.mjs):
+ *   rest  – PostgREST handler (pgRest.mjs) that serves /rest/v1 from PostgreSQL
+ *   hooks – { created(user), updated(user), deleted(user) } mirror Auth users into auth.users
+ */
+export function startMockSupabase({ tables = {}, users = [], signupTrigger = true, port = 0, host = '127.0.0.1', serviceKey = null, functions = {}, rest = null, hooks = {} }) {
+  const state = { tables: structuredClone(tables), users: structuredClone(users), writes: [], requests: [], sessions: new Map(), refresh: new Map(), refreshAmr: new Map(), recoveryEmails: [] };
   const CORS = {
     'access-control-allow-origin': '*',
     'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type, prefer, accept-profile, content-profile, x-supabase-api-version',
@@ -21,15 +26,17 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
   // GoTrue never returns password material.
   const publicUser = ({ password: _password, rotated: _rotated, ...u }) => ({ aud: 'authenticated', role: 'authenticated', user_metadata: {}, created_at: '2026-01-01T00:00:00Z', ...u });
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-  const issueSession = (user) => {
+  const issueSession = (user, amr = [{ method: 'password', timestamp: Math.floor(Date.now() / 1000) }]) => {
     const exp = Math.floor(Date.now() / 1000) + 3600;
-    const access = `${b64({ alg: 'none', typ: 'JWT' })}.${b64({ sub: user.id, email: user.email, role: 'authenticated', aud: 'authenticated', app_metadata: user.app_metadata || {}, exp })}.mock${randomUUID().slice(0, 8)}`;
+    const access = `${b64({ alg: 'none', typ: 'JWT' })}.${b64({ sub: user.id, email: user.email, role: 'authenticated', aud: 'authenticated', app_metadata: user.app_metadata || {}, amr, exp })}.mock${randomUUID().slice(0, 8)}`;
     const refresh = randomUUID();
-    state.sessions.set(access, user.id); state.refresh.set(refresh, user.id);
+    state.sessions.set(access, user.id); state.refresh.set(refresh, user.id); state.refreshAmr.set(refresh, amr);
     return { access_token: access, token_type: 'bearer', expires_in: 3600, expires_at: exp, refresh_token: refresh, user: publicUser(user) };
   };
   const bearer = (req) => (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   const isAdminCall = (req) => !serviceKey || bearer(req) === serviceKey;
+  const isBanned = (u) => Boolean(u.banned_until) && new Date(u.banned_until).getTime() > Date.now();
+  const banUntil = (d) => (d === 'none' ? null : d ? new Date(Date.now() + Number.parseInt(d, 10) * 3600 * 1000).toISOString() : undefined);
   const missingColumn = (res, table, col) => send(res, 400, { code: '42703', message: `column ${table}.${col} does not exist`, details: null, hint: null });
   const unknownBodyColumn = (res, table, col) => send(res, 400, { code: 'PGRST204', message: `Could not find the '${col}' column of '${table}' in the schema cache`, details: null, hint: null });
 
@@ -85,13 +92,32 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
       if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'password') {
         const user = state.users.find((u) => u.email === String(body?.email || '').toLowerCase());
         if (!user || user.password !== body?.password) return send(res, 400, { error: 'invalid_grant', error_description: 'Invalid login credentials', code: 'invalid_credentials', msg: 'Invalid login credentials' });
+        if (isBanned(user)) return send(res, 400, { error: 'invalid_grant', error_description: 'User is banned', code: 'user_banned', msg: 'User is banned' });
+        user.last_sign_in_at = new Date().toISOString();
         return send(res, 200, issueSession(user));
       }
       if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'refresh_token') {
         const user = state.users.find((u) => u.id === state.refresh.get(body?.refresh_token));
-        if (!user) return send(res, 400, { error: 'invalid_grant', error_description: 'Invalid Refresh Token' });
+        if (!user || isBanned(user)) return send(res, 400, { error: 'invalid_grant', error_description: 'Invalid Refresh Token' });
+        const amr = state.refreshAmr.get(body.refresh_token);
         state.refresh.delete(body.refresh_token);
-        return send(res, 200, issueSession(user));
+        return send(res, 200, issueSession(user, amr));
+      }
+      // Password recovery: records the "email" (link with a recovery session, implicit flow) instead of sending it.
+      if (url.pathname === '/auth/v1/recover' && req.method === 'POST') {
+        const user = state.users.find((u) => u.email === String(body?.email || '').toLowerCase());
+        if (user && !isBanned(user)) {
+          const sess = issueSession(user, [{ method: 'recovery', timestamp: Math.floor(Date.now() / 1000) }]);
+          const redirect = url.searchParams.get('redirect_to') || 'http://localhost:5173/';
+          state.recoveryEmails.push({ email: user.email, redirect, link: `${redirect}#access_token=${sess.access_token}&expires_at=${sess.expires_at}&expires_in=3600&refresh_token=${sess.refresh_token}&token_type=bearer&type=recovery` });
+        }
+        return send(res, 200, {});
+      }
+      if (url.pathname === '/auth/v1/user' && req.method === 'PUT') {
+        const user = state.users.find((u) => u.id === state.sessions.get(bearer(req)));
+        if (!user) return send(res, 401, { code: 'bad_jwt', msg: 'invalid JWT' });
+        if (body?.password) user.password = body.password;
+        return send(res, 200, publicUser(user));
       }
       if (url.pathname === '/auth/v1/user' && req.method === 'GET') {
         const user = state.users.find((u) => u.id === state.sessions.get(bearer(req)));
@@ -104,8 +130,13 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
       if (url.pathname === '/auth/v1/admin/users' && req.method === 'GET') return send(res, 200, { users: state.users.map(publicUser), aud: 'authenticated' });
       if (url.pathname === '/auth/v1/admin/users' && req.method === 'POST') {
         if (state.users.some((u) => u.email === body.email)) return send(res, 422, { code: 'email_exists', msg: 'A user with this email address has already been registered' });
-        const user = { id: randomUUID(), email: body.email, app_metadata: body.app_metadata || {}, user_metadata: body.user_metadata || {}, password: body.password };
+        const user = { id: randomUUID(), email: body.email, app_metadata: body.app_metadata || {}, user_metadata: body.user_metadata || {}, password: body.password, ...(body.ban_duration ? { banned_until: banUntil(body.ban_duration) } : {}) };
         state.users.push(user);
+        if (hooks.created) {
+          Promise.resolve(hooks.created(user)).then(() => send(res, 200, publicUser(user)))
+            .catch((e) => { state.users = state.users.filter((u) => u.id !== user.id); send(res, 500, { msg: `mock: ${e.message}` }); });
+          return;
+        }
         if (signupTrigger) triggerProfile(user);
         return send(res, 200, publicUser(user));
       }
@@ -114,16 +145,38 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
         const user = state.users.find((u) => u.id === m[1]);
         if (!user) return send(res, 404, { msg: 'User not found' });
         if (req.method === 'GET') return send(res, 200, publicUser(user));
-        if (req.method === 'PUT') { Object.assign(user, { app_metadata: body.app_metadata ?? user.app_metadata, password: body.password ?? user.password, rotated: true }); return send(res, 200, publicUser(user)); }
+        if (req.method === 'PUT') {
+          Object.assign(user, { app_metadata: body.app_metadata ?? user.app_metadata, password: body.password ?? user.password, rotated: true });
+          if (body.ban_duration !== undefined) user.banned_until = banUntil(body.ban_duration);
+          if (hooks.updated) { Promise.resolve(hooks.updated(user)).then(() => send(res, 200, publicUser(user))).catch((e) => send(res, 500, { msg: e.message })); return; }
+          return send(res, 200, publicUser(user));
+        }
         if (req.method === 'DELETE') {
           state.users = state.users.filter((u) => u.id !== user.id);
           if (state.tables.profiles) state.tables.profiles.rows = state.tables.profiles.rows.filter((r) => r.id !== user.id);
           if (state.tables.subject_admins) state.tables.subject_admins.rows = state.tables.subject_admins.rows.filter((r) => r.admin_id !== user.id);
+          if (hooks.deleted) { Promise.resolve(hooks.deleted(user)).then(() => send(res, 200, {})).catch((e) => send(res, 500, { msg: e.message })); return; }
           return send(res, 200, {});
         }
       }
 
       // ── PostgREST ──
+      if (rest && url.pathname.startsWith('/rest/v1/')) {
+        const tok = bearer(req);
+        const sessionUser = state.users.find((u) => u.id === state.sessions.get(tok));
+        let role = 'anon';
+        let claims = { role: 'anon' };
+        if (serviceKey && tok === serviceKey) { role = 'service_role'; claims = { role: 'service_role' }; }
+        else if (sessionUser) {
+          role = 'authenticated';
+          try { claims = JSON.parse(Buffer.from(tok.split('.')[1], 'base64url')); } catch { claims = { sub: sessionUser.id, role: 'authenticated' }; }
+        }
+        rest.handle({ method: req.method, url, body, headers: req.headers, role, claims }).then((out) => {
+          res.writeHead(out.status, { 'content-type': 'application/json', ...CORS, ...(out.headers || {}) });
+          res.end(out.body === undefined ? '' : JSON.stringify(out.body));
+        }).catch((e) => send(res, 500, { message: `mock rest: ${e.message}` }));
+        return;
+      }
       const t = url.pathname.match(/^\/rest\/v1\/([a-z_]+)$/);
       if (!t) return send(res, 404, { message: `mock: unhandled ${req.method} ${url.pathname}` });
       const name = t[1];

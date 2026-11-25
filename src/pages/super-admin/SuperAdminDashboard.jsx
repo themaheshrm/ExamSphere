@@ -8,25 +8,33 @@ import StatCard from '../../components/common/StatCard';
 import StatusBadge from '../../components/common/StatusBadge';
 import EmptyState from '../../components/common/EmptyState';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
-import { platformService } from '../../services/platformService';
-import { examRandomizerService } from '../../services/examRandomizerService';
-import { studentRosterService } from '../../services/studentRosterService';
+import Alert from '../../components/common/Alert';
 import { activityLogService } from '../../services/activityLogService';
-import { questionBankService } from '../../services/questionBankService';
-import { INSTITUTION } from '../../utils/constants';
+import { platformApi } from '../../services/api/platformApi';
+import { examsApi } from '../../services/api/examsApi';
+import { select } from '../../services/api/core';
+import { useAsync } from '../../utils/useAsync';
 import { useDataVersion } from '../../utils/useDataVersion';
 import { formatRelative } from '../../utils/format';
 
 export default function SuperAdminDashboard() {
   const navigate = useNavigate();
-  useDataVersion();
-
-  const users = platformService.listUsers();
-  const exam = examRandomizerService.getExamState();
-  const attempts = examRandomizerService.listAttempts();
-  const roster = studentRosterService.list();
-  const activity = activityLogService.list().slice(0, 8);
-  const admins = users.filter((u) => u.role === 'admin');
+  const version = useDataVersion();
+  const { data, error } = useAsync(async () => {
+    const [overview, exams, activity, admins, questions] = await Promise.all([
+      platformApi.overview(),
+      examsApi.list(),
+      activityLogService.list({ limit: 8 }),
+      select('profiles', 'id,full_name,email,staff_id,is_active', (q) => q.eq('role', 'admin').order('full_name')),
+      select('questions', 'id', (q) => q.eq('is_archived', false)),
+    ]);
+    return { overview, exams, activity, admins, questionCount: questions.length };
+  }, [version]);
+  const overview = data?.overview || {};
+  const exam = data?.exams.find((e) => e.status === 'published') || data?.exams[0] || null;
+  const activity = data?.activity || [];
+  const admins = (data?.admins || []).map((u) => ({ id: u.id, name: u.full_name, email: u.email, staffId: u.staff_id, status: u.is_active === false ? 'Inactive' : 'Active' }));
+  const v = (x) => (data ? x ?? 0 : '—');
 
   return (
     <div className="space-y-6">
@@ -36,16 +44,18 @@ export default function SuperAdminDashboard() {
         actions={(
           <>
             <Button variant="secondary" icon={Building2} onClick={() => navigate('/super-admin/organizations')}>Institution profile</Button>
-            <Button icon={UserCog} onClick={() => navigate('/super-admin/users')}>Manage staff accounts</Button>
+            <Button icon={UserCog} onClick={() => navigate('/super-admin/admins')}>Admin Management</Button>
           </>
         )}
       />
 
+      {error && <Alert tone="danger" title="Could not load the overview">{error.message}</Alert>}
+
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Platform figures">
-        <StatCard title="Question bank" value={questionBankService.getQuestions().length} icon={HelpCircle} onClick={() => navigate('/admin/questions')} />
-        <StatCard title="Staff accounts" value={users.length} hint={`${users.filter((u) => u.status === 'Active').length} active accounts`} icon={UserCog} onClick={() => navigate('/super-admin/users')} />
-        <StatCard title="Candidates on roster" value={roster.length} hint={`${exam.meta.courseCode} · ${INSTITUTION.shortName}`} icon={Users} tone="success" />
-        <StatCard title="Answer sheets" value={attempts.filter((a) => a.status === 'submitted').length} hint={`${attempts.filter((a) => a.status === 'active').length} attempt(s) in progress`} icon={ClipboardList} tone="neutral" onClick={() => navigate('/admin/results')} />
+        <StatCard title="Question bank" value={v(data?.questionCount)} icon={HelpCircle} onClick={() => navigate('/admin/questions')} />
+        <StatCard title="Admin accounts" value={v(overview.admins)} hint={`${admins.filter((u) => u.status === 'Active').length} active`} icon={UserCog} onClick={() => navigate('/super-admin/admins')} />
+        <StatCard title="Student accounts" value={v(overview.students)} hint={`${v(overview.publishedExams)} published examination(s)`} icon={Users} tone="success" />
+        <StatCard title="Answer sheets" value={v(overview.evaluatedSubmissions)} hint={`${v(overview.activeAttempts)} attempt(s) in progress`} icon={ClipboardList} tone="neutral" onClick={() => navigate('/admin/results')} />
       </section>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -53,7 +63,7 @@ export default function SuperAdminDashboard() {
           className="lg:col-span-2"
           title="Examination office staff"
           bodyClassName="p-0"
-          action={<Link to="/super-admin/users" className="text-xs font-semibold text-[#1E3A5F] hover:underline">Manage</Link>}
+          action={<Link to="/super-admin/admins" className="text-xs font-semibold text-[#1E3A5F] hover:underline">Manage</Link>}
         >
           <Table className="rounded-none border-0">
             <TableHeader>
@@ -76,17 +86,21 @@ export default function SuperAdminDashboard() {
         </Card>
 
         <Card title="Current examination">
-          <p className="font-mono text-xs font-bold text-[#1E3A5F]">{exam.meta.courseCode}</p>
-          <p className="mt-0.5 text-sm font-semibold text-slate-900">{exam.meta.courseTitle}</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <StatusBadge status={exam.isPublished ? 'Published' : 'Draft'} />
-            <StatusBadge status={exam.verificationReport?.isValid ? 'Verified' : 'Failed'}>{exam.verificationReport?.isValid ? 'Patterns verified' : 'Verification failed'}</StatusBadge>
-          </div>
-          <dl className="mt-4 divide-y divide-slate-100 text-xs">
-            {[['Patterns', '10 × 25 questions'], ['Duration', `${exam.meta.durationMinutes} min`], ['Total marks', exam.meta.totalMarks]].map(([k, v]) => (
-              <div key={k} className="flex justify-between py-2"><dt className="text-slate-500">{k}</dt><dd className="font-semibold text-slate-900">{v}</dd></div>
-            ))}
-          </dl>
+          {!exam ? <EmptyState compact title={data ? 'No examinations yet' : 'Loading…'} /> : (
+            <>
+              <p className="font-mono text-xs font-bold text-[#1E3A5F]">{exam.courseCode}</p>
+              <p className="mt-0.5 text-sm font-semibold text-slate-900">{exam.title}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <StatusBadge status={exam.isPublished ? 'Published' : exam.status === 'closed' ? 'Closed' : 'Draft'} />
+                <StatusBadge status={exam.patternCount === 10 && !exam.patternsStale ? 'Verified' : 'Failed'}>{exam.patternCount === 10 && !exam.patternsStale ? 'Patterns generated' : 'Patterns not generated'}</StatusBadge>
+              </div>
+              <dl className="mt-4 divide-y divide-slate-100 text-xs">
+                {[['Patterns', `${exam.patternCount} × ${exam.questionCount} questions`], ['Duration', `${exam.durationMinutes} min`], ['Total marks', exam.totalMarks ?? '—']].map(([k, val]) => (
+                  <div key={k} className="flex justify-between py-2"><dt className="text-slate-500">{k}</dt><dd className="font-semibold text-slate-900">{val}</dd></div>
+                ))}
+              </dl>
+            </>
+          )}
           <div className="mt-4 flex flex-wrap gap-2">
             <Button size="sm" variant="secondary" icon={Activity} onClick={() => navigate('/super-admin/monitoring')}>System status</Button>
             <Button size="sm" variant="ghost" onClick={() => navigate('/admin/exams')}>Open console</Button>

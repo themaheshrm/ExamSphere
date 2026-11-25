@@ -10,18 +10,19 @@ import Badge from '../../components/common/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { activityLogService, ACTIVITY_CATEGORIES } from '../../services/activityLogService';
 import { usePagination } from '../../utils/usePagination';
-import { useDataVersion } from '../../utils/useDataVersion';
+import { useAsync } from '../../utils/useAsync';
+import Alert from '../../components/common/Alert';
 import { downloadText, toCsv } from '../../services/localStore';
 import { formatDateTime } from '../../utils/format';
 import { ROLE_LABELS } from '../../utils/constants';
 
 const selectCls = 'es-select h-9 w-full rounded-sm border border-slate-300 bg-white pl-3 text-sm focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]';
-const CATEGORY_LABEL = { exam: 'Examination', 'question-bank': 'Question bank', candidate: 'Candidate', attempt: 'Attempt', institution: 'Institution', user: 'User', settings: 'Settings' };
+const CATEGORY_LABEL = { exam: 'Examination', 'question-bank': 'Question bank', candidate: 'Candidate', attempt: 'Attempt', institution: 'Institution', user: 'User', account: 'Account', settings: 'Settings', portal: 'Portal' };
 
 /** Append-only audit trail of administrative actions and submissions. */
 export default function ActivityLogPage() {
-  useDataVersion();
-  const entries = activityLogService.list();
+  const { data, error, loading, reload } = useAsync(() => activityLogService.list({ limit: 500 }));
+  const entries = data || [];
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [role, setRole] = useState('');
@@ -48,7 +49,12 @@ export default function ActivityLogPage() {
         eyebrow="Platform Administration"
         title="Activity Logs"
         description="Read-only · newest first"
-        actions={<Button variant="secondary" icon={Download} onClick={exportCsv} disabled={!shown.length}>Export CSV</Button>}
+        actions={(
+          <>
+            <Button variant="secondary" onClick={reload} isLoading={loading}>Refresh</Button>
+            <Button variant="secondary" icon={Download} onClick={exportCsv} disabled={!shown.length}>Export CSV</Button>
+          </>
+        )}
       />
       <Card bodyClassName="p-0">
         <div className="grid gap-3 border-b border-slate-200 p-4 md:grid-cols-[2fr_1fr_1fr]">
@@ -63,7 +69,8 @@ export default function ActivityLogPage() {
           </select>
         </div>
         {shown.length === 0 ? (
-          <EmptyState icon={ScrollText} title={entries.length ? 'No entries match' : 'No activity recorded yet'} />
+          error ? <div className="p-4"><Alert tone="danger" title="Could not load activity">{error.message}</Alert></div>
+            : <EmptyState icon={ScrollText} title={loading ? 'Loading…' : entries.length ? 'No entries match' : 'No activity recorded yet'} />
         ) : (
           <>
             <Table className="rounded-none border-0">

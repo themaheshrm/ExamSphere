@@ -206,7 +206,7 @@ export const authService = {
 
       if (email) {
         await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/login`,
+          redirectTo: `${window.location.origin}/reset-password`,
         });
       }
     } catch (err) {

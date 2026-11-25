@@ -4,7 +4,6 @@ import { LogOut, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { INSTITUTION, NAVIGATION_CONFIG, ROLE_LABELS, USER_ROLES } from '../../utils/constants';
 import { getAdminScope } from '../../services/adminScope';
-import { studentInfo } from '../../data/studentMockData';
 import { getRouteForRole } from '../../services/authService';
 import { InstitutionMark } from '../public/PublicChrome';
 
@@ -47,7 +46,7 @@ export default function Sidebar({ isOpen, onClose }) {
   };
 
   const scope = getAdminScope(user);
-  const identifier = user?.usn || user?.staffId || user?.email || (navRole === USER_ROLES.STUDENT ? studentInfo.usn : '');
+  const identifier = user?.usn || user?.staffId || user?.email || '';
 
   return (
     <>
@@ -68,7 +67,7 @@ export default function Sidebar({ isOpen, onClose }) {
         </div>
 
         <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="truncate text-sm font-semibold text-slate-900">{user?.name || studentInfo.name}</p>
+          <p className="truncate text-sm font-semibold text-slate-900">{user?.name || ''}</p>
           <p className="truncate font-mono text-[11px] text-slate-600">{identifier}</p>
           <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-[#1E3A5F]">{ROLE_LABELS[role] || config.title}</p>
           {scope.scoped && scope.subjectCodes.length > 0 && <p className="mt-0.5 truncate text-[11px] text-slate-600" title={scope.label}>Subject: {scope.label}</p>}

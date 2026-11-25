@@ -1,4 +1,4 @@
-import { normalizeQuestionText, validateQuestion } from '../services/questionBankService.js';
+import { normalizeQuestionText, validateQuestion } from './questionValidation.js';
 
 export const QUESTION_IMPORT_HEADERS = [
   'Subject', 'Topic', 'Question', 'Option A', 'Option B', 'Option C', 'Option D',

@@ -7,6 +7,7 @@ import React, {
   useRef,
 } from 'react';
 import { supabase } from '../services/supabase';
+import { sessionEventAction } from './authEvents';
 import {
   authService,
   fetchVerifiedProfile,
@@ -31,7 +32,7 @@ export function AuthProvider({ children }) {
    * Employs sequence tokening and active-user caching to eliminate race conditions.
    */
   const hydrateFromSession = useCallback(async (session, options = {}) => {
-    const { force = false } = options;
+    const { force = false, keepOnError = false } = options;
     const currentSeq = ++hydrationSequenceRef.current;
 
     if (!session?.user) {
@@ -62,6 +63,10 @@ export function AuthProvider({ children }) {
       if (currentSeq !== hydrationSequenceRef.current) {
         return;
       }
+
+      // Same user, token refresh: a transient read failure keeps the current
+      // (already verified) user rather than signing out mid-examination.
+      if (keepOnError && activeUserIdRef.current === userId) return;
 
       // CRITICAL: Profile missing, invalid, or query failed. Terminate orphaned session immediately.
       activeUserIdRef.current = null;
@@ -112,15 +117,13 @@ export function AuthProvider({ children }) {
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!isMounted) return;
 
-      if (event === 'SIGNED_IN') {
-        // Hydrate only if not already hydrated during this login cycle
-        await hydrateFromSession(session);
-      } else if (event === 'TOKEN_REFRESHED') {
-        // Token refreshed: User and profile identity remain identical; skip re-querying the DB
-        if (session?.user?.id !== activeUserIdRef.current) {
-          await hydrateFromSession(session, { force: true });
-        }
-      } else if (event === 'SIGNED_OUT') {
+      // SIGNED_IN hydrates once per login; PASSWORD_RECOVERY / TOKEN_REFRESHED /
+      // USER_UPDATED rebuild the user from the new signed token (subject scope,
+      // must-change flag, role) so server-side changes apply without a reload.
+      const action = sessionEventAction(event);
+      if (action.hydrate) {
+        await hydrateFromSession(session, { force: action.force, keepOnError: action.keepOnError });
+      } else if (action.signOut) {
         activeUserIdRef.current = null;
         setUser(null);
         setError(null);

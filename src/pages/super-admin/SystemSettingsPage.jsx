@@ -5,31 +5,55 @@ import Card from '../../components/common/Card';
 import InputField from '../../components/common/InputField';
 import PageHeader from '../../components/common/PageHeader';
 import { useToast } from '../../components/common/Toast';
-import { platformService } from '../../services/platformService';
-import { activityLogService } from '../../services/activityLogService';
-import { useAuth } from '../../context/AuthContext';
+import { Spinner } from '../../components/common/LoadingStates';
+import { platformApi } from '../../services/api/platformApi';
+import { useSettings } from '../../context/SettingsContext';
 
-/** Platform settings — each one is read by the candidate-facing screens. */
+const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const FIELDS = ['supportEmail', 'helplinePhone', 'resultDisplay', 'timerWarningMinutes', 'showPatternToCandidates', 'maintenanceNotice'];
+const pick = (s) => Object.fromEntries(FIELDS.map((k) => [k, s[k]]));
+
+function validate(form) {
+  const errors = {};
+  const minutes = Number(form.timerWarningMinutes);
+  if (!EMAIL.test(String(form.supportEmail ?? '').trim())) errors.supportEmail = 'Enter a valid email address.';
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 30) errors.timerWarningMinutes = 'Choose between 1 and 30 minutes.';
+  if (String(form.maintenanceNotice ?? '').length > 240) errors.maintenanceNotice = 'At most 240 characters.';
+  return errors;
+}
+
+/** Platform settings (Supabase platform_settings; saved by the super admin only). */
 export default function SystemSettingsPage() {
-  const { user } = useAuth();
+  const { settings, loaded } = useSettings();
+  if (!loaded) return <div className="flex justify-center py-16" role="status"><Spinner size="lg" /><span className="sr-only">Loading settings…</span></div>;
+  return <SettingsForm key={settings.updatedAt || 'defaults'} initial={pick(settings)} />;
+}
+
+function SettingsForm({ initial }) {
   const { notify } = useToast();
-  const [saved, setSaved] = useState(() => platformService.getSettings());
-  const [form, setForm] = useState(saved);
+  const { reload } = useSettings();
+  const [saved, setSaved] = useState(initial);
+  const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
   const dirty = JSON.stringify(form) !== JSON.stringify(saved);
 
-  const save = (event) => {
+  const save = async (event) => {
     event.preventDefault();
+    const found = validate(form);
+    setErrors(found);
+    if (Object.keys(found).length) return;
+    setSaving(true);
     try {
-      const value = platformService.saveSettings(form);
-      const changed = Object.keys(value).filter((k) => value[k] !== saved[k]);
-      activityLogService.log({ action: 'Updated platform settings', category: 'settings', actor: user, target: changed.join(', ') || 'no changes' });
+      const value = pick(await platformApi.saveSettings({ ...form, timerWarningMinutes: Number(form.timerWarningMinutes) }));
       setSaved(value);
       setForm(value);
-      setErrors({});
-      notify('Platform settings saved. They apply to the next screen each user opens.');
+      reload();
+      notify('Platform settings saved.');
     } catch (error) {
-      setErrors(error.fieldErrors || {});
+      notify(error.message, 'error');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -101,7 +125,7 @@ export default function SystemSettingsPage() {
           <p className="text-xs text-slate-600" aria-live="polite">{dirty ? 'You have unsaved changes.' : 'All changes saved.'}</p>
           <div className="flex gap-2">
             <Button variant="secondary" icon={RotateCcw} disabled={!dirty} onClick={() => { setForm(saved); setErrors({}); }}>Discard</Button>
-            <Button type="submit" icon={Save} disabled={!dirty}>Save settings</Button>
+            <Button type="submit" icon={Save} disabled={!dirty} isLoading={saving}>Save settings</Button>
           </div>
         </div>
       </div>

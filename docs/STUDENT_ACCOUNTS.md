@@ -37,7 +37,7 @@ Admin (browser, signed in)
 | Role, Student ID, name, must-change flag, department/semester/section/mobile | Auth `app_metadata` (writable only with the service role) |
 | Profile | `profiles` (`role = student`, `usn`, `full_name`; `email`, `institution_id`, `department_id` if the columns exist) |
 | Semester, section, phone | `student_details` if migration 005 is applied |
-| Exam eligibility roster (current browser-local exam engine) | the admin's browser roster, without any password |
+| Exam eligibility | `exam_assignments`: a new student is assigned to the examination being managed on the Candidates page |
 
 ## Deploying (one-time; needs your approval and the Supabase CLI)
 
@@ -61,6 +61,7 @@ Settings to check:
   supabase secrets set ALLOWED_ORIGINS=https://your-examsphere-domain
   ```
 - **Auth → Sign In / Providers.** Turn off **Allow new users to sign up**. Accounts are created only by the function or the scripts.
+- **Auth → URL Configuration.** Add `https://<your-site>/reset-password` to the redirect URLs. Password-reset emails link there; the page sets the new password through `change-temporary-password` (`mode: recovery`). It accepts only a session created from a recovery link in the last hour, and it also clears any temporary-password flag.
 - **Auth → Password security.** A minimum length of at least 12 matches the app's policy.
 
 ### Optional: database-side gate (migration 012, not applied)

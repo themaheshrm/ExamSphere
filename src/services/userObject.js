@@ -27,13 +27,23 @@ export function buildUserObject(authUser, profile, role, accessToken = null) {
     // password; cleared only by change-temporary-password. Read from the
     // signed token so it cannot be removed by editing browser storage.
     mustChangePassword: claims?.app_metadata?.must_change_password === true,
+    // Session created from a password-recovery email link (signed `amr` claim).
+    recoverySession: isRecoveryClaims(claims),
     // Every identity signal used to resolve a subject-admin scope. More
     // signals can only narrow access (see adminScope.getAdminScope).
     scopeSignals: {
       staffIds: [profile.staff_id, signedStaffId].filter(Boolean),
       emails: [claims?.email, authUser.email].filter(Boolean),
+      // Server-managed assignment (manage-admins), from the signed token only.
+      adminType: claims?.app_metadata?.admin_type || null,
+      subjectCode: claims?.app_metadata?.subject_code || null,
     },
   };
+}
+
+function isRecoveryClaims(claims) {
+  const amr = Array.isArray(claims?.amr) ? claims.amr : [];
+  return amr.some((e) => e === 'recovery' || e?.method === 'recovery');
 }
 
 /** Payload of a JWT (no signature check here; the server already verified it). */

@@ -21,6 +21,8 @@ export default function ChangePasswordPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!user?.mustChangePassword) return <Navigate to={getRouteForRole(role)} replace />;
+  // Arrived from a reset email: no temporary password to type — use the reset screen.
+  if (user.recoverySession) return <Navigate to="/reset-password" replace />;
 
   const problems = form.newPassword ? passwordProblems(form.newPassword, { usn: user.usn, current: form.currentPassword }) : [];
   const set = (key) => (e) => { setForm({ ...form, [key]: e.target.value }); setErrors({ ...errors, [key]: undefined }); };

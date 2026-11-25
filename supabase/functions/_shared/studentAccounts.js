@@ -125,7 +125,7 @@ export function validateStudentInput(input) {
 }
 
 // ─── Authorisation ───────────────────────────────────────────────────────────
-async function tableExists(admin, table, column) {
+export async function tableExists(admin, table, column) {
   const { error } = await admin.from(table).select(column).limit(0);
   if (!error) return true;
   if (isMissingTable(error) || isMissingColumn(error)) return false;
@@ -144,15 +144,19 @@ export async function authorizeCaller(admin, schema, callerUser) {
   // Subject administrators manage one subject; the student roster stays with the institution admin.
   const staffIds = [profile.staff_id, callerUser.app_metadata?.staff_id].filter(Boolean).map((s) => String(s).toUpperCase());
   const email = String(callerUser.email || '').toLowerCase();
-  const demoScoped = staffIds.some((s) => DEMO_ADMIN_IDS.includes(s))
-    || DEMO_ADMIN_IDS.some((id) => email === `${id.toLowerCase()}@${EMAIL_DOMAIN}`);
+  const md = callerUser.app_metadata || {};
+  // Signed, server-managed assignment (manage-admins) wins; otherwise the demo registry applies.
+  const signedScoped = Boolean(md.subject_code) || md.admin_type === 'subject';
+  const signedInstitution = md.admin_type === 'institution' && !md.subject_code;
+  const demoScoped = !signedInstitution && (staffIds.some((s) => DEMO_ADMIN_IDS.includes(s))
+    || DEMO_ADMIN_IDS.some((id) => email === `${id.toLowerCase()}@${EMAIL_DOMAIN}`));
   let tableScoped = false;
   if (await tableExists(admin, 'subject_admins', 'admin_id')) {
     const { data, error } = await admin.from('subject_admins').select('admin_id').eq('admin_id', callerUser.id).limit(1);
     if (error) throw new Error(`Could not read subject_admins: ${error.message}`);
     tableScoped = (data || []).length > 0;
   }
-  if (profile.role === 'admin' && (demoScoped || tableScoped)) {
+  if (profile.role === 'admin' && (signedScoped || demoScoped || tableScoped)) {
     throw new HttpError(403, 'Subject administrators cannot create student accounts. Ask the institution administrator.');
   }
   return profile;
@@ -244,7 +248,51 @@ export async function createStudentAccount({ admin, callerUser, input, log = () 
 }
 
 // ─── First-login password change ─────────────────────────────────────────────
-export async function changeTemporaryPassword({ admin, callerUser, input, verifyPassword, log = () => {} }) {
+/** Payload of a JWT already verified by auth.getUser (no signature check here). */
+export function jwtClaims(token) {
+  try {
+    const part = String(token).split('.')[1];
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '=');
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
+  } catch {
+    return {};
+  }
+}
+
+const RECOVERY_WINDOW_SECONDS = 60 * 60;
+
+/** True when the session was created from a password-recovery email link within the last hour. */
+export function isRecentRecoverySession(claims, now = Date.now()) {
+  const entries = Array.isArray(claims?.amr) ? claims.amr : [];
+  return entries.some((e) => {
+    if (e === 'recovery') return true; // RFC 8176 string form carries no timestamp; token expiry bounds it
+    return e?.method === 'recovery' && Number(e.timestamp) * 1000 > now - RECOVERY_WINDOW_SECONDS * 1000;
+  });
+}
+
+/**
+ * Password set from a recovery email link (any role). The caller proved email
+ * ownership through Supabase's recovery flow, so no current password is asked;
+ * the server enforces the policy and clears any temporary-password flag.
+ */
+async function setRecoveredPassword({ admin, callerUser, input, claims, log }) {
+  if (!isRecentRecoverySession(claims)) {
+    throw new HttpError(403, 'This reset link has expired. Request a new one.');
+  }
+  const newPassword = String(input?.newPassword ?? '');
+  const problems = passwordProblems(newPassword, { usn: callerUser.app_metadata?.usn || callerUser.app_metadata?.staff_id });
+  if (problems.length) throw new HttpError(422, `The new password needs ${problems.join(', ')}.`, { newPassword: `Needs ${problems.join(', ')}.` });
+  const { error } = await admin.auth.admin.updateUserById(callerUser.id, {
+    password: newPassword,
+    app_metadata: { ...callerUser.app_metadata, must_change_password: false, password_changed_at: new Date().toISOString() },
+  });
+  if (error) throw new Error(`updateUserById failed: ${error.message}`);
+  log('change-temporary-password: recovered', { user: callerUser.id });
+  return { ok: true };
+}
+
+export async function changeTemporaryPassword({ admin, callerUser, input, verifyPassword, claims = {}, log = () => {} }) {
+  if (input?.mode === 'recovery') return setRecoveredPassword({ admin, callerUser, input, claims, log });
   if (callerUser.app_metadata?.must_change_password !== true) {
     throw new HttpError(409, 'This account has no temporary password to change.');
   }
@@ -283,7 +331,7 @@ function respond(request, allowedOrigins, status, body) {
   });
 }
 
-async function authenticatedCall(request, { admin, allowedOrigins = [], log = () => {} }, action) {
+export async function authenticatedCall(request, { admin, allowedOrigins = [], log = () => {} }, action) {
   if (request.method === 'OPTIONS') return respond(request, allowedOrigins, 204);
   if (request.method !== 'POST') return respond(request, allowedOrigins, 405, { error: 'Method not allowed.' });
   try {
@@ -295,7 +343,7 @@ async function authenticatedCall(request, { admin, allowedOrigins = [], log = ()
     if (raw.length > MAX_BODY_BYTES) throw new HttpError(413, 'Request too large.');
     let input;
     try { input = raw ? JSON.parse(raw) : {}; } catch { throw new HttpError(400, 'Invalid JSON body.'); }
-    const result = await action(data.user, input);
+    const result = await action(data.user, input, jwtClaims(token));
     return respond(request, allowedOrigins, 200, result);
   } catch (error) {
     if (error instanceof HttpError) {
@@ -311,7 +359,7 @@ export function handleCreateStudent(request, deps) {
 }
 
 export function handleChangeTemporaryPassword(request, deps) {
-  return authenticatedCall(request, deps, (callerUser, input) => changeTemporaryPassword({
-    admin: deps.admin, callerUser, input, verifyPassword: deps.verifyPassword, log: deps.log,
+  return authenticatedCall(request, deps, (callerUser, input, claims) => changeTemporaryPassword({
+    admin: deps.admin, callerUser, input, claims, verifyPassword: deps.verifyPassword, log: deps.log,
   }));
 }

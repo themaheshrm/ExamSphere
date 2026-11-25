@@ -3,8 +3,7 @@ import { Outlet } from 'react-router-dom';
 import { AlertTriangle } from 'lucide-react';
 import Navbar from '../components/navigation/Navbar';
 import Sidebar from '../components/navigation/Sidebar';
-import { platformService } from '../services/platformService';
-import { useDataVersion } from '../utils/useDataVersion';
+import { useSettings } from '../context/SettingsContext';
 import { Spinner } from '../components/common/LoadingStates';
 
 /**
@@ -13,8 +12,7 @@ import { Spinner } from '../components/common/LoadingStates';
  */
 export default function DashboardLayout() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  useDataVersion(); // re-render when platform settings change
-  const notice = platformService.getSettings().maintenanceNotice;
+  const notice = useSettings().settings.maintenanceNotice;
 
   return (
     <div className="min-h-screen bg-[#F4F6F9] text-slate-900">

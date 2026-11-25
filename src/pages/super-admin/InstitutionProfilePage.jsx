@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom';
 import Card from '../../components/common/Card';
 import PageHeader from '../../components/common/PageHeader';
 import { InstitutionMark } from '../../components/public/PublicChrome';
-import { platformService } from '../../services/platformService';
-import { studentRosterService } from '../../services/studentRosterService';
-import { useDataVersion } from '../../utils/useDataVersion';
+import { INSTITUTION } from '../../utils/constants';
+import { useSettings } from '../../context/SettingsContext';
+import { platformApi } from '../../services/api/platformApi';
+import { rosterApi } from '../../services/api/rosterApi';
+import { useAsync } from '../../utils/useAsync';
 
 /**
  * Dr. AIT institution profile. ExamSphere serves this institution only, so
@@ -13,12 +15,19 @@ import { useDataVersion } from '../../utils/useDataVersion';
  * Platform Settings.
  */
 export default function InstitutionProfilePage() {
-  useDataVersion();
-  const institution = platformService.getInstitution();
-  const settings = platformService.getSettings();
-  const admins = platformService.listUsers().filter((u) => u.role === 'admin');
-  const roster = studentRosterService.list();
-  const departments = [...new Set(roster.map((s) => s.department))];
+  const { settings } = useSettings();
+  // Database record (institutions row) merged over the fixed deployment constants.
+  const { data } = useAsync(async () => {
+    const [row, staff, students] = await Promise.all([platformApi.institution(), platformApi.staffCounts(), rosterApi.list()]);
+    return { row, staff, students };
+  });
+  const institution = {
+    ...INSTITUTION,
+    ...(data?.row ? { name: data.row.name, shortName: data.row.short_name || INSTITUTION.shortName, code: data.row.code, emailDomain: data.row.email_domain || INSTITUTION.emailDomain } : {}),
+    status: data?.row && !data.row.is_active ? 'Inactive' : INSTITUTION.status,
+  };
+  const students = data?.students || [];
+  const departments = [...new Set(students.map((s) => s.department).filter(Boolean))];
 
   const rows = [
     ['Institution', institution.name],
@@ -70,8 +79,8 @@ export default function InstitutionProfilePage() {
           <Card title="At a glance">
             <dl className="divide-y divide-slate-100 text-xs">
               {[
-                ['Examination office administrators', admins.length],
-                ['Candidates on roster', roster.length],
+                ['Staff accounts (admins)', data ? data.staff.total : '—'],
+                ['Student accounts', data ? students.length : '—'],
                 ['Departments with candidates', departments.length],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4 py-2.5">
@@ -80,7 +89,7 @@ export default function InstitutionProfilePage() {
                 </div>
               ))}
             </dl>
-            <Link to="/super-admin/users" className="mt-3 inline-block text-xs font-semibold text-[#1E3A5F] hover:underline">Manage staff accounts</Link>
+            <Link to="/super-admin/admins" className="mt-3 inline-block text-xs font-semibold text-[#1E3A5F] hover:underline">Admin Management</Link>
           </Card>
         </div>
       </div>

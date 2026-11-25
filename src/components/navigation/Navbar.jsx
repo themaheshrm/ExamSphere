@@ -3,8 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Bell, ChevronDown, LogOut, Menu, UserCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { INSTITUTION, NOTIFICATION_PATHS, PROFILE_PATHS, ROLE_LABELS, USER_ROLES } from '../../utils/constants';
-import { notificationService } from '../../services/notificationService';
-import { useDataVersion } from '../../utils/useDataVersion';
+import { useNotifications } from '../../utils/useNotifications';
 import { formatRelative } from '../../utils/format';
 
 const TONE_DOT = {
@@ -34,10 +33,8 @@ export default function Navbar({ onToggleSidebar, sidebarOpen }) {
   const notifRef = useRef(null);
   useDismiss(profileRef, profileOpen, setProfileOpen);
   useDismiss(notifRef, notifOpen, setNotifOpen);
-  useDataVersion(); // re-render when notification sources change
-
-  const notifications = notificationService.list(user);
-  const unread = notifications.filter((n) => !n.read).length;
+  const { items: notifications, unread: unreadItems, markRead } = useNotifications();
+  const unread = unreadItems.length;
 
   const initials = (user?.name || 'ES').split(/\s+/).filter(Boolean).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
   const identifier = user?.usn || user?.staffId || user?.email || '';
@@ -49,7 +46,7 @@ export default function Navbar({ onToggleSidebar, sidebarOpen }) {
   };
 
   const openNotification = (n) => {
-    notificationService.markRead(user, [n.id]);
+    markRead([n.id]);
     setNotifOpen(false);
     if (n.link) navigate(n.link);
   };
@@ -100,7 +97,7 @@ export default function Navbar({ onToggleSidebar, sidebarOpen }) {
               <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5">
                 <p className="text-xs font-semibold text-slate-900">Notifications</p>
                 {unread > 0 && (
-                  <button type="button" onClick={() => notificationService.markRead(user, notifications.map((n) => n.id))} className="text-[11px] font-semibold text-[#1E3A5F] hover:underline">
+                  <button type="button" onClick={() => markRead(notifications.map((n) => n.id))} className="text-[11px] font-semibold text-[#1E3A5F] hover:underline">
                     Mark all as read
                   </button>
                 )}

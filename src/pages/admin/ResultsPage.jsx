@@ -11,28 +11,63 @@ import StatusBadge from '../../components/common/StatusBadge';
 import Tabs, { TabPanel } from '../../components/common/Tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useAdminExamContext } from '../../utils/useAdminExamContext';
-import { ExamSwitcher, ExamNotCreated, ScopeDenied } from '../../components/admin/ExamScope';
-import { studentRosterService } from '../../services/studentRosterService';
-import { PATTERN_LABELS } from '../../utils/randomizationEngine';
+import { ExamSwitcher, AdminExamGate } from '../../components/admin/ExamScope';
+import { examsApi, PATTERN_LABELS } from '../../services/api/examsApi';
+import { questionsApi } from '../../services/api/questionsApi';
+import { useAsync, useAutoReload } from '../../utils/useAsync';
+import Alert from '../../components/common/Alert';
 import { usePagination } from '../../utils/usePagination';
 import { downloadText, toCsv } from '../../services/localStore';
 import { formatDateTime } from '../../utils/format';
-import { useDataVersion } from '../../utils/useDataVersion';
 
 const selectCls = 'es-select h-9 w-full rounded-sm border border-slate-300 bg-white pl-3 text-sm focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]';
 const LETTERS = ['A', 'B', 'C', 'D'];
 
-function ResultsView({ service, examCode, summaries, selectExam }) {
-  useDataVersion(); // live: re-read when attempts change
+function toRow(c) {
+  const done = ['submitted', 'auto_submitted'].includes(c.attemptStatus) && c.score !== null;
+  return {
+    id: c.attemptId || c.assignmentId,
+    attemptId: c.attemptId,
+    studentIdentifier: c.usn,
+    name: c.name,
+    paperCode: c.paperCode || '—',
+    patternLabel: c.patternLabel ? `Pattern ${c.patternLabel}` : '',
+    status: done ? 'submitted' : c.attemptStatus === 'active' ? 'active' : c.attemptStatus || 'not_started',
+    startedAt: c.startedAt,
+    submittedAt: c.submittedAt,
+    result: done ? {
+      score: c.score, maxScore: c.maxScore, percentage: c.percentage, passed: c.passed,
+      correctCount: c.correctCount, incorrectCount: c.incorrectCount, unattemptedCount: c.unattemptedCount,
+    } : null,
+  };
+}
+
+async function loadResults(examId) {
+  const [candidates, items] = await Promise.all([examsApi.candidates(examId), examsApi.itemAnalysis(examId)]);
+  const questions = await questionsApi.byIds((items || []).map((i) => i.question_id));
+  const text = Object.fromEntries(questions.map((q) => [q.id, q.text]));
+  return {
+    attempts: candidates.filter((c) => c.attemptId).map(toRow),
+    items: (items || []).map((i) => ({
+      questionId: i.question_id, bankNo: i.question_no, text: text[i.question_id] || '—',
+      attempted: Number(i.attempted), correct: Number(i.correct),
+    })),
+  };
+}
+
+function ResultsView({ exam, examCode, summaries, selectExam }) {
   const [tab, setTab] = useState('register');
   const [search, setSearch] = useState('');
   const [pattern, setPattern] = useState('');
   const [outcome, setOutcome] = useState('');
   const [detail, setDetail] = useState(null);
+  const { data, error, loading, reload } = useAsync(() => loadResults(exam.id), [exam.id]);
+  useAutoReload(reload, 30000);
+  const breakdown = useAsync(() => (detail ? examsApi.breakdown(detail.attemptId) : Promise.resolve(null)), [detail?.attemptId]);
 
-  const attempts = service.listAttempts();
-  const names = Object.fromEntries(studentRosterService.list().map((s) => [s.usn, s.name]));
-  const { meta } = service.getExamState();
+  const attempts = data?.attempts || [];
+  const names = Object.fromEntries(attempts.map((a) => [a.studentIdentifier, a.name]));
+  const meta = { courseCode: exam.courseCode, courseTitle: exam.courseTitle, totalMarks: exam.totalMarks };
 
   const submitted = attempts.filter((a) => a.status === 'submitted' && a.result);
   const active = attempts.filter((a) => a.status === 'active');
@@ -64,17 +99,11 @@ function ResultsView({ service, examCode, summaries, selectExam }) {
     };
   });
 
-  const itemAnalysis = (() => {
-    const items = {};
-    submitted.forEach((a) => a.result.breakdown?.forEach((b) => {
-      const it = items[b.questionId] || { questionId: b.questionId, text: b.questionText, attempted: 0, correct: 0, total: 0 };
-      it.total += 1;
-      if (b.isAttempted) it.attempted += 1;
-      if (b.isCorrect) it.correct += 1;
-      items[b.questionId] = it;
-    }));
-    return Object.values(items).sort((x, y) => x.correct / x.total - y.correct / y.total);
-  })();
+  const submittedCount = submitted.length;
+  const itemAnalysis = (data?.items || [])
+    .map((it) => ({ ...it, total: submittedCount }))
+    .filter((it) => it.total > 0)
+    .sort((x, y) => x.correct - y.correct);
 
   const register = (() => {
     const term = search.trim().toLowerCase();
@@ -121,6 +150,13 @@ function ResultsView({ service, examCode, summaries, selectExam }) {
           </>
         )}
       />
+
+      {error && (
+        <Alert tone="danger" title="Could not load results">
+          {error.message} <button type="button" className="ml-2 font-semibold underline" onClick={reload}>Try again</button>
+        </Alert>
+      )}
+      {loading && !data && <p className="text-sm text-slate-500" role="status">Loading results…</p>}
 
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 md:grid-cols-3 xl:grid-cols-6" aria-label="Result summary">
         {[
@@ -267,7 +303,7 @@ function ResultsView({ service, examCode, summaries, selectExam }) {
                     const pct = (it.correct / it.total) * 100;
                     return (
                       <TableRow key={it.questionId}>
-                        <TableCell className="font-mono text-slate-500">{it.questionId}</TableCell>
+                        <TableCell className="font-mono text-slate-500">{it.bankNo ?? '—'}</TableCell>
                         <TableCell className="text-slate-800">{it.text}</TableCell>
                         <TableCell align="right" className="tabular-nums">{it.attempted}/{it.total}</TableCell>
                         <TableCell>
@@ -293,7 +329,9 @@ function ResultsView({ service, examCode, summaries, selectExam }) {
         subtitle={detail ? `${names[detail.studentIdentifier] || 'Candidate'} · ${detail.paperCode} · submitted ${formatDateTime(detail.submittedAt)}` : ''}
         maxWidth="max-w-4xl"
       >
-        {detail?.result && (
+        {detail?.result && breakdown.loading && !breakdown.data && <p className="text-sm text-slate-500">Loading answer sheet…</p>}
+        {detail?.result && breakdown.error && <p className="text-sm text-rose-700">{breakdown.error.message}</p>}
+        {detail?.result && breakdown.data && !breakdown.loading && (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 sm:grid-cols-5">
               {[
@@ -321,7 +359,7 @@ function ResultsView({ service, examCode, summaries, selectExam }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {detail.result.breakdown.map((b) => (
+                  {breakdown.data.map((b) => (
                     <tr key={b.displayNumber} className={b.isCorrect ? '' : b.isAttempted ? 'bg-rose-50/50' : 'bg-slate-50/60'}>
                       <td className="px-3 py-2 font-mono text-slate-500">{b.displayNumber}</td>
                       <td className="max-w-sm px-3 py-2 text-slate-800">{b.questionText}</td>
@@ -342,7 +380,9 @@ function ResultsView({ service, examCode, summaries, selectExam }) {
 
 export default function ResultsPage() {
   const ctx = useAdminExamContext();
-  if (!ctx.allowed) return <ScopeDenied examCode={ctx.examCode} scope={ctx.scope} />;
-  if (!ctx.service.exists()) return <ExamNotCreated eyebrow="Examinations" title="Results & Reports" examCode={ctx.examCode} summaries={ctx.summaries} onSelect={ctx.selectExam} scope={ctx.scope} />;
-  return <ResultsView key={ctx.examCode} {...ctx} />;
+  return (
+    <AdminExamGate ctx={ctx} eyebrow="Examinations" title="Results & Reports" requireExam>
+      {(c) => <ResultsView key={c.exam.id} {...c} />}
+    </AdminExamGate>
+  );
 }

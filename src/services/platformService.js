@@ -3,7 +3,6 @@ import { INSTITUTION } from '../utils/constants.js';
 import { DEMO_ADMINS } from '../data/demoAdmins.js';
 
 const USERS_KEY = 'examsphere_platform_users_v1';
-const SETTINGS_KEY = 'examsphere_platform_settings_v1';
 // Retired multi-institution registry (sample tenants); purged on first load.
 const LEGACY_INSTITUTIONS_KEY = 'examsphere_institutions_v1';
 const DRAIT_ID = 'inst-drait';
@@ -14,15 +13,6 @@ const SEED_USERS = [
   { id: 'usr-admin-2', name: 'Prof. Kavitha S.', email: 'kavitha.s@drait.edu.in', role: 'admin', staffId: 'ADM-9120', status: 'Active', createdAt: '2025-08-19T09:00:00.000Z' },
   { id: 'usr-root-1', name: 'Platform Administrator', email: 'root@examsphere.io', role: 'super-admin', staffId: null, status: 'Active', createdAt: '2025-05-01T09:00:00.000Z' },
 ];
-
-export const DEFAULT_SETTINGS = {
-  supportEmail: 'coe@drait.edu.in',
-  helplinePhone: '080-23211505',
-  resultDisplay: 'immediate',      // 'immediate' | 'withheld'
-  timerWarningMinutes: 5,
-  showPatternToCandidates: true,
-  maintenanceNotice: '',
-};
 
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -111,32 +101,5 @@ export const platformService = {
     writeJson(USERS_KEY, input.id ? all.map((u) => (u.id === input.id ? record : u)) : [...all, record]);
     emitChange('users');
     return record;
-  },
-
-  getSettings() {
-    return { ...DEFAULT_SETTINGS, ...readJson(SETTINGS_KEY, {}) };
-  },
-
-  saveSettings(input) {
-    const minutes = Number(input.timerWarningMinutes);
-    const errors = {};
-    if (!EMAIL.test(String(input.supportEmail ?? '').trim())) errors.supportEmail = 'Enter a valid email address.';
-    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 30) errors.timerWarningMinutes = 'Choose between 1 and 30 minutes.';
-    if (Object.keys(errors).length) {
-      const error = new Error('Please correct the highlighted fields.');
-      error.fieldErrors = errors;
-      throw error;
-    }
-    const value = {
-      supportEmail: String(input.supportEmail).trim().toLowerCase(),
-      helplinePhone: String(input.helplinePhone ?? '').trim(),
-      resultDisplay: input.resultDisplay === 'withheld' ? 'withheld' : 'immediate',
-      timerWarningMinutes: minutes,
-      showPatternToCandidates: Boolean(input.showPatternToCandidates),
-      maintenanceNotice: String(input.maintenanceNotice ?? '').trim().slice(0, 240),
-    };
-    writeJson(SETTINGS_KEY, value);
-    emitChange('settings');
-    return value;
   },
 };

@@ -1,16 +1,9 @@
 import React, { useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowRight, Award, Bell, BookOpenCheck, CalendarDays, CheckCheck, Clock, KeyRound, LifeBuoy, MapPin, Megaphone,
+  AlertTriangle, ArrowRight, Award, Bell, BookOpenCheck, CalendarDays, CheckCheck, Clock, KeyRound, LifeBuoy, Megaphone,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import {
-  studentInfo,
-  activeExam,
-  upcomingExams,
-  recentResults,
-  announcements,
-} from '../../data/studentMockData';
 import Modal from '../../components/common/Modal';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
@@ -21,14 +14,13 @@ import Alert from '../../components/common/Alert';
 import EmptyState from '../../components/common/EmptyState';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useToast } from '../../components/common/Toast';
-import { examRandomizerService } from '../../services/examRandomizerService';
-import { publishedSubjectExams } from '../../services/examRegistry';
-import { studentRosterService } from '../../services/studentRosterService';
-import { notificationService } from '../../services/notificationService';
-import { platformService } from '../../services/platformService';
 import { authService } from '../../services/authService';
-import { assignPatternForCandidate } from '../../utils/patternAssignment';
-import { useDataVersion } from '../../utils/useDataVersion';
+import { studentExamApi } from '../../services/api/studentExamApi';
+import { rosterApi } from '../../services/api/rosterApi';
+import { platformApi } from '../../services/api/platformApi';
+import { useAsync, useAutoReload } from '../../utils/useAsync';
+import { useNotifications } from '../../utils/useNotifications';
+import { useSettings } from '../../context/SettingsContext';
 import { formatDateTime } from '../../utils/format';
 import { INSTITUTION, USER_ROLES } from '../../utils/constants';
 
@@ -41,86 +33,120 @@ const TAB_TITLES = {
   support: ['Help & Support', null],
 };
 
+const STATUS = {
+  in_progress: ['In progress', 'Attempt in progress'],
+  completed: ['Submitted', 'Submitted'],
+  live: ['Live', 'Open now'],
+  upcoming: ['Upcoming', 'Not yet open'],
+  closed: ['Closed', 'Closed'],
+  entry_closed: ['Closed', 'Entry closed'],
+};
+const ORDER = { in_progress: 0, live: 1, upcoming: 2, completed: 3, entry_closed: 4, closed: 5 };
+const EMPTY_META = { courseCode: '—', courseTitle: '—', examDate: '—', durationMinutes: '—', totalMarks: '—', totalQuestions: 25, instructions: [] };
+
+async function loadStudentHome() {
+  const [exams, withheld, profile, notices] = await Promise.all([
+    studentExamApi.myExams(),
+    studentExamApi.withheld(),
+    rosterApi.list().then((rows) => rows[0] || null), // RLS: only the student's own row
+    platformApi.announcements().catch(() => []),
+  ]);
+  const submittedIds = exams.filter((e) => ['submitted', 'auto_submitted'].includes(e.attemptStatus)).map((e) => e.examId);
+  const [details, results] = await Promise.all([
+    studentExamApi.examDetails(exams.map((e) => e.examId)),
+    Promise.all(submittedIds.map((id) => studentExamApi.myResult(id).then((r) => [id, r]))),
+  ]);
+  return { exams, withheld, profile, notices, details, results: Object.fromEntries(results) };
+}
+
 export default function StudentDashboard() {
   const { user } = useAuth();
   const { notify } = useToast();
+  const { settings } = useSettings();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  useDataVersion(); // reflect publication / roster / notification changes live
   const activeTab = TAB_TITLES[searchParams.get('tab')] ? searchParams.get('tab') : 'dashboard';
   const [detailsExam, setDetailsExam] = useState(null);
   const [sendingReset, setSendingReset] = useState(false);
+  const isStudentAccount = user?.role === USER_ROLES.STUDENT;
+  const { data, error, loading, reload } = useAsync(() => (isStudentAccount ? loadStudentHome() : Promise.resolve(null)), [user?.id, isStudentAccount]);
+  useAutoReload(reload, 60000);
+  const { items: notifications, unread, markRead } = useNotifications();
+  const announcements = data?.notices || [];
 
-  // ── Live examination state ─────────────────────────────────────────────────
-  const examState = examRandomizerService.getExamState();
-  const settings = platformService.getSettings();
-  const meta = examState.meta;
-  const isCbtPublished = examState.isPublished;
-
+  // Genuine data only: the signed-in account and its own student record.
+  const record = data?.profile;
   const currentStudent = {
-    name: user?.name || studentInfo.name,
-    usn: user ? (user.usn || user.identifier || 'Unavailable') : studentInfo.usn,
-    department: studentInfo.department,
-    semester: studentInfo.semester,
-    section: studentInfo.section,
-    institution: studentInfo.institution,
-    email: user?.email || studentInfo.email,
+    name: user?.name || record?.name || '—',
+    usn: user?.usn || user?.identifier || '—',
+    department: record?.department || '—',
+    semester: record?.semester ? `Semester ${record.semester}` : '—',
+    section: record?.section ? `Section ${record.section}` : '—',
+    institution: INSTITUTION.name,
+    email: user?.email || record?.email || '—',
   };
-
-  const studentIdentity = user ? (user.usn || user.identifier || user.id || null) : studentInfo.usn;
-  const normalizedId = String(studentIdentity ?? '').trim().toUpperCase();
-  const assignedPattern = assignPatternForCandidate(studentIdentity);
-  const eligible = studentRosterService.isEligible(normalizedId);
-  const rosterEntry = studentRosterService.find(normalizedId);
-  const ownAttempts = examRandomizerService.listAttempts().filter((a) => a.studentIdentifier === normalizedId);
-  const activeAttempt = ownAttempts.find((a) => a.status === 'active');
-  const submittedResult = examRandomizerService.getStudentAttempt(normalizedId);
-  const showScore = settings.resultDisplay !== 'withheld';
-  const notifications = notificationService.list(user ? { ...user, role: user.role || USER_ROLES.STUDENT } : null);
-  const unread = notifications.filter((n) => !n.read);
-
-  const cbtState = !eligible ? 'Withheld'
-    : activeAttempt ? 'In progress'
-      : submittedResult ? 'Submitted'
-        : isCbtPublished ? 'Live' : 'Draft';
-  const cbtLabel = { Withheld: 'Eligibility withheld', 'In progress': 'Attempt in progress', Submitted: 'Submitted', Live: 'Open now', Draft: 'Under moderation' }[cbtState];
-  const canStart = eligible && (activeAttempt || (isCbtPublished && !submittedResult));
-  const otherExams = upcomingExams.filter((e) => e.courseCode !== meta.courseCode);
-
-  // Published subject examinations (created by subject-scoped admins). Each has
-  // its own patterns and results; the candidate's paper and grading come from
-  // that examination's service.
-  const subjectExams = publishedSubjectExams().map(({ subject, service }) => {
-    const state = service.getExamState();
-    const mine = service.listAttempts().filter((a) => a.studentIdentifier === normalizedId);
-    const active = mine.find((a) => a.status === 'active');
-    const result = service.getStudentAttempt(normalizedId);
-    const status = !eligible ? 'Withheld' : active ? 'In progress' : result ? 'Submitted' : 'Live';
-    return { subject, meta: state.meta, active, result, status };
-  });
-  const subjectAction = (exam, size = 'sm') => {
-    if (!eligible) return <Button size={size} variant="secondary" disabled>Not eligible</Button>;
-    if (exam.active) return <Button size={size} onClick={() => navigate(`/student/exam?exam=${exam.subject.code}`)} rightIcon={ArrowRight}>Resume</Button>;
-    if (exam.result) return <Button size={size} variant="secondary" onClick={() => go('results')}>View submission</Button>;
-    return <Button size={size} onClick={() => navigate(`/student/exam?exam=${exam.subject.code}`)} rightIcon={ArrowRight}>Start</Button>;
-  };
-  const subjectStatusLabel = { Withheld: 'Eligibility withheld', 'In progress': 'Attempt in progress', Submitted: 'Submitted', Live: 'Open now' };
+  const withheld = data?.withheld || [];
+  const eligible = withheld.length === 0 || (data?.exams || []).length > 0;
+  const withheldReason = withheld.map((w) => w.reason).filter(Boolean)[0] || '';
 
   const go = (tab) => setSearchParams({ tab });
+  const openExam = (code) => navigate(`/student/exam?exam=${encodeURIComponent(code)}`);
+
+  // Assigned examinations from the server (published / closed only), most urgent first.
+  const exams = (data?.exams || []).map((e) => {
+    const [status, label] = STATUS[e.availability] || ['Closed', 'Closed'];
+    const result = data.results[e.examId] || null;
+    const detail = data.details[e.examId] || {};
+    return {
+      examId: e.examId,
+      code: e.courseCode,
+      availability: e.availability,
+      status,
+      label,
+      deadlineAt: e.deadlineAt,
+      patternLabel: e.patternLabel,
+      active: e.availability === 'in_progress',
+      result,
+      meta: {
+        courseCode: e.courseCode,
+        courseTitle: e.title || e.courseTitle,
+        semester: detail.semesterLabel,
+        examDate: e.windowStart ? formatDateTime(e.windowStart) : '—',
+        windowEnd: e.windowEnd,
+        durationMinutes: e.durationMinutes,
+        totalMarks: e.totalMarks ?? '—',
+        totalQuestions: e.totalQuestions || 25,
+        instructions: detail.instructions || [],
+      },
+    };
+  }).sort((x, y) => (ORDER[x.availability] ?? 9) - (ORDER[y.availability] ?? 9));
+  const current = exams[0] || null;
+  const subjectExams = exams.slice(1);
+  const meta = current?.meta || EMPTY_META;
+  const withResults = exams.filter((e) => e.result);
+
+  const examActionFor = (exam, size = 'md') => {
+    if (!isStudentAccount) return <Button size={size} variant="secondary" disabled>Students only</Button>;
+    if (!exam) return <Button size={size} variant="secondary" disabled>Not yet open</Button>;
+    if (exam.active) return <Button size={size} onClick={() => openExam(exam.code)} rightIcon={ArrowRight}>Resume examination</Button>;
+    if (exam.result || exam.availability === 'completed') return <Button size={size} variant="secondary" onClick={() => go('results')}>View submission</Button>;
+    if (exam.availability === 'live') return <Button size={size} onClick={() => openExam(exam.code)} rightIcon={ArrowRight}>Start examination</Button>;
+    if (exam.availability === 'upcoming') return <Button size={size} variant="secondary" disabled title={`Opens ${exam.meta.examDate}`}>Not yet open</Button>;
+    return <Button size={size} variant="secondary" disabled>Closed</Button>;
+  };
+  const examAction = (size = 'md') => examActionFor(current, size);
+  const subjectAction = (exam) => examActionFor(exam, 'sm');
+  const cbtState = current?.status || 'Draft';
+  const cbtLabel = current?.label || 'No examination assigned';
+  const isCbtPublished = Boolean(current);
+  const assignedPattern = current?.patternLabel;
+  const activeAttempt = current?.active ? current : null;
 
   const resetPassword = async () => {
     setSendingReset(true);
     const response = await authService.requestPasswordReset({ identifier: currentStudent.usn, role: USER_ROLES.STUDENT });
     setSendingReset(false);
     notify(response.message, 'info', { title: 'Password reset requested' });
-  };
-
-  const examAction = (size = 'md') => {
-    if (!eligible) return <Button size={size} variant="secondary" disabled>Not eligible</Button>;
-    if (activeAttempt) return <Button size={size} onClick={() => navigate('/student/exam')} rightIcon={ArrowRight}>Resume examination</Button>;
-    if (submittedResult) return <Button size={size} variant="secondary" onClick={() => go('results')}>View submission</Button>;
-    if (isCbtPublished) return <Button size={size} onClick={() => navigate('/student/exam')} rightIcon={ArrowRight}>Start examination</Button>;
-    return <Button size={size} variant="secondary" disabled title="Not yet published by the examination office">Not yet open</Button>;
   };
 
   const [title, description] = TAB_TITLES[activeTab];
@@ -143,16 +169,27 @@ export default function StudentDashboard() {
         ) : null}
       />
 
-      {!eligible && (
+      {error && (
+        <Alert tone="danger" title="Could not load your examinations">
+          {error.message} <button type="button" className="ml-2 font-semibold underline" onClick={reload}>Try again</button>
+        </Alert>
+      )}
+      {loading && !data && isStudentAccount && <p className="text-sm text-slate-500" role="status">Loading your examinations…</p>}
+      {withheld.length > 0 && (
         <Alert tone="danger" title="Examination access withheld">
-          {rosterEntry?.remarks ? `Reason: ${rosterEntry.remarks}. ` : ''}Contact the examination office at {settings.supportEmail} or {settings.helplinePhone}.
+          {withheldReason ? `Reason: ${withheldReason}. ` : ''}Contact the examination office at {settings.supportEmail} or {settings.helplinePhone}.
         </Alert>
       )}
 
       {/* ═══ DASHBOARD ═══ */}
       {activeTab === 'dashboard' && (
         <>
-          <section className="overflow-hidden rounded-sm border border-slate-300 bg-white" aria-labelledby="next-exam-heading">
+          {!current && data && (
+            <Card title="Current examination">
+              <EmptyState compact icon={BookOpenCheck} title="No examination assigned yet" />
+            </Card>
+          )}
+          {current && <section className="overflow-hidden rounded-sm border border-slate-300 bg-white" aria-labelledby="next-exam-heading">
             <div className="flex items-center justify-between bg-[#1E3A5F] px-5 py-2.5 text-white">
               <h2 id="next-exam-heading" className="text-[11px] font-semibold uppercase tracking-wider text-slate-100">Current examination</h2>
               <span className="text-[11px] text-slate-200">Computer-based test</span>
@@ -162,39 +199,38 @@ export default function StudentDashboard() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-sm border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-xs font-bold text-[#1E3A5F]">{meta.courseCode}</span>
                   <StatusBadge status={cbtState}>{cbtLabel}</StatusBadge>
-                  {isCbtPublished && eligible && assignedPattern && settings.showPatternToCandidates && (
+                  {isCbtPublished && assignedPattern && settings.showPatternToCandidates && (
                     <Badge variant="primary" className="font-mono">Paper {meta.courseCode}-{assignedPattern}</Badge>
                   )}
                 </div>
                 <h3 className="text-lg font-semibold text-slate-900">{meta.courseTitle}</h3>
                 <dl className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-600">
                   <div className="flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /><dt className="sr-only">Date</dt><dd className="font-medium text-slate-900">{meta.examDate}</dd></div>
-                  <div className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /><dt className="sr-only">Time</dt><dd className="font-medium text-slate-900">{activeExam.time} · {meta.durationMinutes} min</dd></div>
-                  <div className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /><dt className="sr-only">Centre</dt><dd className="font-medium text-slate-900">{activeExam.terminal}</dd></div>
+                  <div className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /><dt className="sr-only">Time</dt><dd className="font-medium text-slate-900">{meta.durationMinutes} min</dd></div>
                   <div><dt className="inline">Marks: </dt><dd className="inline font-medium text-slate-900">{meta.totalMarks} ({meta.totalQuestions} MCQs)</dd></div>
                 </dl>
               </div>
               <div className="flex shrink-0 flex-wrap gap-2">
-                <Button variant="secondary" onClick={() => setDetailsExam('current')}>Instructions & venue</Button>
+                <Button variant="secondary" onClick={() => setDetailsExam(current)}>Instructions</Button>
                 {examAction()}
               </div>
             </div>
             {activeAttempt && (
               <div className="border-t border-amber-200 bg-amber-50 px-5 py-2.5 text-xs text-amber-900">
-                Attempt in progress since {formatDateTime(activeAttempt.startedAt)}. The timer is running.
+                Attempt in progress{activeAttempt.deadlineAt ? ` — submits automatically at ${formatDateTime(activeAttempt.deadlineAt)}` : ''}. The timer is running.
               </div>
             )}
-          </section>
+          </section>}
 
           {subjectExams.length > 0 && (
             <Card title="Subject examinations" bodyClassName="p-0">
               <ul className="divide-y divide-slate-100">
                 {subjectExams.map((exam) => (
-                  <li key={exam.subject.code} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <li key={exam.examId} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
                       <p className="flex flex-wrap items-center gap-2">
                         <span className="font-mono text-xs font-semibold text-[#1E3A5F]">{exam.meta.courseCode}</span>
-                        <StatusBadge status={exam.status} size="sm">{subjectStatusLabel[exam.status]}</StatusBadge>
+                        <StatusBadge status={exam.status} size="sm">{exam.label}</StatusBadge>
                       </p>
                       <p className="text-sm font-medium text-slate-900">{exam.meta.courseTitle}</p>
                       <p className="text-[11px] text-slate-500">{exam.meta.totalQuestions} MCQs · {exam.meta.totalMarks} marks · {exam.meta.durationMinutes} min</p>
@@ -208,8 +244,8 @@ export default function StudentDashboard() {
 
           <section className="grid grid-cols-3 gap-2 sm:gap-4" aria-label="Summary">
             {[
-              ['Upcoming examinations', otherExams.length + (submittedResult ? 0 : 1), 'exams', BookOpenCheck],
-              ['Results declared', recentResults.length + (submittedResult && showScore ? 1 : 0), 'results', Award],
+              ['Open examinations', exams.filter((e) => e.availability === 'live' || e.availability === 'in_progress').length, 'exams', BookOpenCheck],
+              ['Results', withResults.filter((e) => e.result.released).length, 'results', Award],
               ['Unread notifications', unread.length, 'notifications', Bell],
             ].map(([label, value, tab, Icon]) => (
               <button key={tab} type="button" onClick={() => go(tab)} className="flex items-start justify-between rounded-sm border border-slate-200 bg-white p-3 text-left transition-colors hover:border-slate-300 hover:bg-slate-50 sm:items-center sm:p-4">
@@ -229,30 +265,27 @@ export default function StudentDashboard() {
                   <TableRow>
                     <TableHead>Course</TableHead>
                     <TableHead align="center">Marks</TableHead>
-                    <TableHead align="center">Grade</TableHead>
+                    <TableHead align="center">Result</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {submittedResult && showScore && (
-                    <TableRow>
-                      <TableCell><span className="font-mono font-semibold text-[#1E3A5F]">{submittedResult.courseCode}</span> {submittedResult.courseTitle} <Badge size="sm" variant="primary" className="ml-1">Provisional</Badge></TableCell>
-                      <TableCell align="center" className="tabular-nums">{submittedResult.score} / {submittedResult.maxScore}</TableCell>
-                      <TableCell align="center"><StatusBadge status={submittedResult.passed ? 'Pass' : 'Fail'} size="sm" /></TableCell>
-                    </TableRow>
-                  )}
-                  {recentResults.slice(0, 4).map((res) => (
-                    <TableRow key={res.courseCode}>
-                      <TableCell><span className="font-mono font-semibold text-[#1E3A5F]">{res.courseCode}</span> {res.courseTitle}</TableCell>
-                      <TableCell align="center" className="tabular-nums">{res.scoredMarks} / {res.maxMarks}</TableCell>
-                      <TableCell align="center" className="font-semibold">{res.grade.split(' ')[0]}</TableCell>
+                  {withResults.filter((e) => e.result.released).map(({ examId, result }) => (
+                    <TableRow key={examId}>
+                      <TableCell><span className="font-mono font-semibold text-[#1E3A5F]">{result.courseCode}</span> {result.courseTitle} <Badge size="sm" variant="primary" className="ml-1">Provisional</Badge></TableCell>
+                      <TableCell align="center" className="tabular-nums">{result.score} / {result.maxScore}</TableCell>
+                      <TableCell align="center"><StatusBadge status={result.passed ? 'Pass' : 'Fail'} size="sm" /></TableCell>
                     </TableRow>
                   ))}
+                  {!withResults.some((e) => e.result.released) && (
+                    <TableRow><TableCell colSpan={3} className="text-center text-xs text-slate-500">No results yet</TableCell></TableRow>
+                  )}
                 </TableBody>
               </Table>
             </Card>
 
             <Card className="lg:col-span-2" title="Notices from the examination office" bodyClassName="p-0">
               <ul className="divide-y divide-slate-100">
+                {announcements.length === 0 && <li className="px-5 py-3 text-xs text-slate-500">No notices.</li>}
                 {announcements.map((a) => (
                   <li key={a.id} className="px-5 py-3">
                     <div className="flex items-center gap-2">
@@ -271,55 +304,42 @@ export default function StudentDashboard() {
 
       {/* ═══ EXAMS ═══ */}
       {activeTab === 'exams' && (
-        <Card bodyClassName="p-0" title="Examination timetable" subtitle={`${currentStudent.semester} · ${INSTITUTION.academicYear}`}>
+        <Card bodyClassName="p-0" title="Examination timetable" subtitle={INSTITUTION.academicYear}>
           <Table className="rounded-none border-0">
             <TableHeader>
               <TableRow>
                 <TableHead>Course</TableHead>
-                <TableHead className="hidden sm:table-cell">Date & time</TableHead>
-                <TableHead className="hidden md:table-cell">Centre</TableHead>
+                <TableHead className="hidden sm:table-cell">Date</TableHead>
                 <TableHead className="hidden sm:table-cell">Status</TableHead>
                 <TableHead align="right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              <TableRow>
+              {!current && (
+                <TableRow><TableCell colSpan={4} className="text-center text-xs text-slate-500">{data ? 'No examination assigned yet.' : 'Loading…'}</TableCell></TableRow>
+              )}
+              {current && <TableRow>
                 <TableCell>
                   <p className="font-mono text-xs font-semibold text-[#1E3A5F]">{meta.courseCode}</p>
                   <p className="font-medium text-slate-900">{meta.courseTitle}</p>
-                  <p className="text-[11px] text-slate-500 sm:hidden">{meta.examDate} · {activeExam.time}</p>
+                  <p className="text-[11px] text-slate-500 sm:hidden">{meta.examDate} · {meta.durationMinutes} min</p>
                   <p className="mt-1 sm:hidden"><StatusBadge status={cbtState} size="sm">{cbtLabel}</StatusBadge></p>
                 </TableCell>
-                <TableCell className="hidden sm:table-cell">{meta.examDate}<span className="block text-[11px] text-slate-500">{activeExam.time} · {meta.durationMinutes} min</span></TableCell>
-                <TableCell className="hidden md:table-cell">{activeExam.terminal}</TableCell>
+                <TableCell className="hidden sm:table-cell">{meta.examDate}<span className="block text-[11px] text-slate-500">{meta.durationMinutes} min</span></TableCell>
                 <TableCell className="hidden sm:table-cell"><StatusBadge status={cbtState} size="sm">{cbtLabel}</StatusBadge></TableCell>
                 <TableCell align="right"><div className="flex justify-end">{examAction('sm')}</div></TableCell>
-              </TableRow>
+              </TableRow>}
               {subjectExams.map((exam) => (
-                <TableRow key={exam.subject.code}>
+                <TableRow key={exam.examId}>
                   <TableCell>
                     <p className="font-mono text-xs font-semibold text-[#1E3A5F]">{exam.meta.courseCode}</p>
                     <p className="font-medium text-slate-900">{exam.meta.courseTitle}</p>
-                    <p className="text-[11px] text-slate-500 sm:hidden">{exam.meta.examDate || 'Open'} · {exam.meta.durationMinutes} min</p>
-                    <p className="mt-1 sm:hidden"><StatusBadge status={exam.status} size="sm">{subjectStatusLabel[exam.status]}</StatusBadge></p>
+                    <p className="text-[11px] text-slate-500 sm:hidden">{exam.meta.examDate} · {exam.meta.durationMinutes} min</p>
+                    <p className="mt-1 sm:hidden"><StatusBadge status={exam.status} size="sm">{exam.label}</StatusBadge></p>
                   </TableCell>
-                  <TableCell className="hidden sm:table-cell">{exam.meta.examDate || 'Open'}<span className="block text-[11px] text-slate-500">{exam.meta.durationMinutes} min</span></TableCell>
-                  <TableCell className="hidden md:table-cell">{activeExam.terminal}</TableCell>
-                  <TableCell className="hidden sm:table-cell"><StatusBadge status={exam.status} size="sm">{subjectStatusLabel[exam.status]}</StatusBadge></TableCell>
+                  <TableCell className="hidden sm:table-cell">{exam.meta.examDate}<span className="block text-[11px] text-slate-500">{exam.meta.durationMinutes} min</span></TableCell>
+                  <TableCell className="hidden sm:table-cell"><StatusBadge status={exam.status} size="sm">{exam.label}</StatusBadge></TableCell>
                   <TableCell align="right"><div className="flex justify-end">{subjectAction(exam)}</div></TableCell>
-                </TableRow>
-              ))}
-              {otherExams.map((exam) => (
-                <TableRow key={exam.id}>
-                  <TableCell>
-                    <p className="font-mono text-xs font-semibold text-[#1E3A5F]">{exam.courseCode}</p>
-                    <p className="font-medium text-slate-900">{exam.courseTitle}</p>
-                    <p className="text-[11px] text-slate-500 sm:hidden">{exam.examDate} · {exam.time} · {exam.status}</p>
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">{exam.examDate}<span className="block text-[11px] text-slate-500">{exam.time} · {exam.duration}</span></TableCell>
-                  <TableCell className="hidden md:table-cell">{exam.hall}</TableCell>
-                  <TableCell className="hidden sm:table-cell"><StatusBadge status="Pending" size="sm">{exam.status}</StatusBadge></TableCell>
-                  <TableCell align="right"><Button size="sm" variant="ghost" onClick={() => setDetailsExam(exam)}>Details</Button></TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -330,34 +350,11 @@ export default function StudentDashboard() {
       {/* ═══ RESULTS ═══ */}
       {activeTab === 'results' && (
         <>
-          {submittedResult ? (
-            <Card title={`${submittedResult.courseCode} — computer-based test`} subtitle={`Submitted ${formatDateTime(submittedResult.submittedAt)}`} action={<Badge variant="primary">Provisional</Badge>}>
-              {showScore ? (
-                <div className="grid gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 sm:grid-cols-5">
-                  {[
-                    ['Score', `${submittedResult.score} / ${submittedResult.maxScore}`],
-                    ['Percentage', `${submittedResult.percentage}%`],
-                    ['Result', submittedResult.passed ? 'Pass' : 'Below pass mark'],
-                    ['Correct', submittedResult.correctCount],
-                    ['Not attempted', submittedResult.unattemptedCount],
-                  ].map(([k, v]) => (
-                    <div key={k} className="bg-white p-3">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{k}</p>
-                      <p className={`mt-0.5 text-sm font-semibold tabular-nums ${k === 'Result' ? (submittedResult.passed ? 'text-emerald-700' : 'text-rose-700') : 'text-slate-900'}`}>{v}</p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-700">Your answer sheet has been recorded. Results will be published by the {INSTITUTION.office}.</p>
-              )}
-            </Card>
-          ) : (
-            !subjectExams.some((e) => e.result) && <Alert tone="info">No computer-based test has been submitted yet this session.</Alert>
-          )}
+          {withResults.length === 0 && <Alert tone="info">No computer-based test has been submitted yet.</Alert>}
 
-          {subjectExams.filter((e) => e.result).map(({ subject, result }) => (
-            <Card key={subject.code} title={`${result.courseCode} — ${result.courseTitle}`} subtitle={`Submitted ${formatDateTime(result.submittedAt)} · Paper ${result.paperCode}`} action={<Badge variant="primary">Provisional</Badge>}>
-              {showScore ? (
+          {withResults.map(({ examId, result }) => (
+            <Card key={examId} title={`${result.courseCode} — ${result.courseTitle}`} subtitle={`Submitted ${formatDateTime(result.submittedAt)} · Paper ${result.paperCode}`} action={<Badge variant="primary">Provisional</Badge>}>
+              {result.released ? (
                 <div className="grid gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 sm:grid-cols-5">
                   {[
                     ['Score', `${result.score} / ${result.maxScore}`],
@@ -378,32 +375,6 @@ export default function StudentDashboard() {
             </Card>
           ))}
 
-          <Card title="Statement of marks" subtitle={`CGPA ${studentInfo.currentCgpa} · SGPA ${studentInfo.currentSgpa} · Credits ${studentInfo.totalCreditsEarned}`} bodyClassName="p-0">
-            <Table className="rounded-none border-0">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Course</TableHead>
-                  <TableHead className="hidden sm:table-cell">Exam date</TableHead>
-                  <TableHead align="center">Marks</TableHead>
-                  <TableHead align="center">Grade</TableHead>
-                  <TableHead align="center" className="hidden sm:table-cell">Credits</TableHead>
-                  <TableHead align="right" className="hidden sm:table-cell">Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {recentResults.map((res) => (
-                  <TableRow key={res.courseCode}>
-                    <TableCell><span className="font-mono font-semibold text-[#1E3A5F]">{res.courseCode}</span><span className="block text-slate-800">{res.courseTitle}</span></TableCell>
-                    <TableCell className="hidden sm:table-cell">{res.examDate}</TableCell>
-                    <TableCell align="center" className="tabular-nums">{res.scoredMarks} / {res.maxMarks}</TableCell>
-                    <TableCell align="center"><span className="font-semibold">{res.grade.split(' ')[0]}</span><span className="block text-[11px] text-slate-500">GP {res.gradePoint}</span></TableCell>
-                    <TableCell align="center" className="hidden tabular-nums sm:table-cell">{res.credits}</TableCell>
-                    <TableCell align="right" className="hidden sm:table-cell"><StatusBadge status="Pass" size="sm">{res.status}</StatusBadge></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
         </>
       )}
 
@@ -413,7 +384,7 @@ export default function StudentDashboard() {
           <Card
             title="Alerts"
             bodyClassName="p-0"
-            action={unread.length > 0 && <Button size="sm" variant="ghost" icon={CheckCheck} onClick={() => notificationService.markRead(user, notifications.map((n) => n.id))}>Mark all read</Button>}
+            action={unread.length > 0 && <Button size="sm" variant="ghost" icon={CheckCheck} onClick={() => markRead(notifications.map((n) => n.id))}>Mark all read</Button>}
           >
             {notifications.length === 0 ? (
               <EmptyState compact icon={Bell} title="No notifications" />
@@ -421,7 +392,7 @@ export default function StudentDashboard() {
               <ul className="divide-y divide-slate-100">
                 {notifications.map((n) => (
                   <li key={n.id}>
-                    <button type="button" onClick={() => { notificationService.markRead(user, [n.id]); if (n.link) navigate(n.link); }} className={`w-full px-5 py-3 text-left hover:bg-slate-50 ${n.read ? '' : 'bg-[#F7F9FC]'}`}>
+                    <button type="button" onClick={() => { markRead([n.id]); if (n.link) navigate(n.link); }} className={`w-full px-5 py-3 text-left hover:bg-slate-50 ${n.read ? '' : 'bg-[#F7F9FC]'}`}>
                       <span className={`block text-xs ${n.read ? 'font-medium text-slate-700' : 'font-semibold text-slate-900'}`}>{n.title}</span>
                       <span className="mt-0.5 block text-[11px] leading-relaxed text-slate-600">{n.message}</span>
                       <span className="mt-1 block text-[10px] text-slate-400">{n.at ? formatDateTime(n.at) : n.timeLabel || 'Current'}</span>
@@ -433,13 +404,14 @@ export default function StudentDashboard() {
           </Card>
           <Card title="Official circulars" bodyClassName="p-0">
             <ul className="divide-y divide-slate-100">
+              {announcements.length === 0 && <li className="px-5 py-4 text-xs text-slate-500">No circulars.</li>}
               {announcements.map((a) => (
                 <li key={a.id} className="flex gap-3 px-5 py-4">
                   <Megaphone className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
                   <div>
                     <p className="text-xs font-semibold text-slate-900">{a.title}</p>
                     <p className="mt-1 text-xs leading-relaxed text-slate-600">{a.content}</p>
-                    <p className="mt-1.5 text-[11px] text-slate-500">{a.issuer} · {a.date} · <span className="font-mono">{a.id}</span></p>
+                    <p className="mt-1.5 text-[11px] text-slate-500">{a.issuer} · {a.date}</p>
                   </div>
                 </li>
               ))}
@@ -457,13 +429,9 @@ export default function StudentDashboard() {
                 ['Full name', currentStudent.name],
                 ['USN', currentStudent.usn],
                 ['Email', currentStudent.email],
-                ['Programme', studentInfo.degree],
                 ['Department', currentStudent.department],
                 ['Semester / section', `${currentStudent.semester} · ${currentStudent.section}`],
-                ['Admission batch', studentInfo.admissionBatch],
-                ['Scheme', studentInfo.scheme],
                 ['Institution', currentStudent.institution],
-                ['Mentor', studentInfo.mentorName],
               ].map(([k, v]) => (
                 <div key={k} className="border-b border-slate-100 py-2.5">
                   <dt className="text-[11px] text-slate-500">{k}</dt>
@@ -474,12 +442,8 @@ export default function StudentDashboard() {
           </Card>
           <div className="space-y-6">
             <Card title="Examination eligibility">
-              <StatusBadge status={eligible ? 'Eligible' : 'Withheld'}>{eligible ? studentInfo.eligibilityStatus : 'Withheld'}</StatusBadge>
-              <dl className="mt-3 space-y-2 text-xs">
-                <div className="flex justify-between"><dt className="text-slate-500">Attendance</dt><dd className="font-semibold text-slate-900">{studentInfo.attendancePercentage}</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">Hall</dt><dd className="text-right font-semibold text-slate-900">{studentInfo.assignedHall}</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">Terminal</dt><dd className="font-semibold text-slate-900">{studentInfo.assignedTerminal}</dd></div>
-              </dl>
+              <StatusBadge status={eligible ? 'Eligible' : 'Withheld'}>{eligible ? 'Eligible' : 'Withheld'}</StatusBadge>
+              {withheldReason && <p className="mt-2 text-xs text-slate-600">{withheldReason}</p>}
             </Card>
             <Card title="Password">
               <Button variant="secondary" icon={KeyRound} isLoading={sendingReset} onClick={resetPassword} className="w-full">Send password reset link</Button>
@@ -506,44 +470,35 @@ export default function StudentDashboard() {
       <Modal
         isOpen={Boolean(detailsExam)}
         onClose={() => setDetailsExam(null)}
-        title={detailsExam === 'current' ? `${meta.courseCode} · ${meta.courseTitle}` : detailsExam ? `${detailsExam.courseCode} · ${detailsExam.courseTitle}` : ''}
+        title={detailsExam ? `${detailsExam.meta.courseCode} · ${detailsExam.meta.courseTitle}` : ''}
         maxWidth="max-w-lg"
-        footer={detailsExam === 'current' ? (
+        footer={(
           <>
             <Button variant="secondary" onClick={() => setDetailsExam(null)}>Close</Button>
-            {canStart && examAction()}
+            {detailsExam && (detailsExam.active || detailsExam.availability === 'live') && examActionFor(detailsExam)}
           </>
-        ) : undefined}
+        )}
       >
         {detailsExam && (
           <div className="space-y-4">
             <dl className="divide-y divide-slate-100 rounded-sm border border-slate-200 text-xs">
-              {(detailsExam === 'current' ? [
-                ['Date', meta.examDate],
-                ['Time', activeExam.time],
-                ['Duration', `${meta.durationMinutes} minutes`],
-                ['Questions / marks', `${meta.totalQuestions} MCQs · ${meta.totalMarks} marks`],
-                ['Centre', activeExam.examCenter],
-                ['Terminal', activeExam.terminal],
-                ['Invigilator', activeExam.invigilator],
-              ] : [
-                ['Date', detailsExam.examDate],
-                ['Time', detailsExam.time],
-                ['Duration', detailsExam.duration],
-                ['Marks', detailsExam.marks],
-                ['Centre', detailsExam.hall],
-              ]).map(([k, v]) => (
+              {[
+                ['Opens', detailsExam.meta.examDate || '—'],
+                ['Closes', detailsExam.meta.windowEnd ? formatDateTime(detailsExam.meta.windowEnd) : '—'],
+                ['Duration', `${detailsExam.meta.durationMinutes} minutes`],
+                ['Questions / marks', `${detailsExam.meta.totalQuestions} MCQs · ${detailsExam.meta.totalMarks} marks`],
+              ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4 px-3 py-2">
                   <dt className="text-slate-500">{k}</dt>
                   <dd className="text-right font-medium text-slate-900">{v}</dd>
                 </div>
               ))}
             </dl>
-            {detailsExam === 'current' && (
+            {detailsExam.meta.instructions?.length > 0 && (
               <div>
-                <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-900"><AlertTriangle className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" /> Conduct guidelines</p>
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-900"><AlertTriangle className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" /> Instructions</p>
                 <ul className="list-disc space-y-1 pl-5 text-xs leading-relaxed text-slate-700">
-                  {activeExam.guidelines.map((g) => <li key={g}>{g}</li>)}
+                  {detailsExam.meta.instructions.map((g) => <li key={g}>{g}</li>)}
                 </ul>
               </div>
             )}

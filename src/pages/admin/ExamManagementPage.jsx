@@ -13,18 +13,17 @@ import StatusBadge from '../../components/common/StatusBadge';
 import Tabs, { TabPanel } from '../../components/common/Tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useToast } from '../../components/common/Toast';
-import { studentRosterService } from '../../services/studentRosterService';
+import EmptyState from '../../components/common/EmptyState';
 import { activityLogService } from '../../services/activityLogService';
-import { PATTERN_LABELS } from '../../utils/randomizationEngine';
-import { assignPatternForCandidate } from '../../utils/patternAssignment';
+import { examsApi, examDateOf, PATTERN_LABELS } from '../../services/api/examsApi';
+import { questionsApi } from '../../services/api/questionsApi';
+import { useAsync, useAutoReload, emitDataChanged } from '../../utils/useAsync';
+import { useSettings } from '../../context/SettingsContext';
 import { formatDateTime } from '../../utils/format';
 import { useAuth } from '../../context/AuthContext';
 import { useAdminExamContext } from '../../utils/useAdminExamContext';
-import { ExamSwitcher, ScopeDenied } from '../../components/admin/ExamScope';
-import { scopedQuestionBank } from '../../services/scopedQuestionBank';
-import { defaultSubjectMeta } from '../../services/examRegistry';
+import { ExamSwitcher, ScopeDenied, AdminExamGate } from '../../components/admin/ExamScope';
 import { DEFAULT_EXAM_CODE } from '../../services/adminScope';
-import { subjectByCode } from '../../data/subjectCatalog';
 
 const LETTERS = ['A', 'B', 'C', 'D'];
 const CHECK_LABELS = {
@@ -36,6 +35,15 @@ const CHECK_LABELS = {
   answerKeysValid: 'Answer key valid for every pattern',
 };
 
+const ATTEMPTED = ['active', 'submitted', 'auto_submitted'];
+const DEFAULT_INSTRUCTIONS = [
+  '25 multiple-choice questions. Marks are shown with each question.',
+  'Select one option per question.',
+  'You can revisit questions and change answers until you submit. Use Mark for review to flag a question.',
+  'The examination is submitted automatically when time runs out.',
+  'Once submitted, answers cannot be changed.',
+];
+
 function metaToForm(meta) {
   return {
     courseTitle: meta.courseTitle,
@@ -46,75 +54,155 @@ function metaToForm(meta) {
   };
 }
 
-function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }) {
+const toMaster = (q) => ({
+  id: q.questionNo, uuid: q.id, text: q.statement, options: q.options, correctOption: q.correctOption,
+  topic: q.topic, marks: q.marks, negativeMarks: q.negativeMarks,
+});
+
+async function loadConsole(exam) {
+  const [master, patterns, candidates, verification] = await Promise.all([
+    examsApi.masterQuestions(exam.id),
+    examsApi.patterns(exam.id),
+    examsApi.candidates(exam.id),
+    exam.patternCount > 0 ? examsApi.verification(exam.id) : Promise.resolve(null),
+  ]);
+  const questionNo = Object.fromEntries(master.map((q) => [q.id, q.questionNo]));
+  return {
+    master: master.map(toMaster),
+    patterns: Object.fromEntries(patterns.map((p) => [p.label, {
+      patternLabel: p.patternLabel,
+      paperCode: p.paperCode,
+      questions: p.questions.map((q) => ({
+        displayNumber: q.displayNumber, originalId: questionNo[q.questionId] ?? '—', text: q.text, options: q.options, correctOption: q.correctOption,
+      })),
+    }])),
+    candidates,
+    verification,
+  };
+}
+
+function ExamConsole({ exam, examCode, summaries, selectExam, isDefaultExam, reload: reloadContext }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { notify } = useToast();
-  const [examState, setExamState] = useState(() => service.getExamState());
+  const { data, error, loading, reload } = useAsync(() => loadConsole(exam), [exam.id, exam.patternsGeneratedAt, exam.status, exam.questionCount]);
+  useAutoReload(reload, 30000);
   const [activeTab, setActiveTab] = useState('configuration');
   const [selectedPattern, setSelectedPattern] = useState('A');
   const [showAnswerKey, setShowAnswerKey] = useState(false);
-  const [confirm, setConfirm] = useState(null); // 'regenerate' | 'publish' | 'unpublish' | 'reset'
-  const [configForm, setConfigForm] = useState(() => metaToForm(examState.meta));
+  const [confirm, setConfirm] = useState(null); // 'regenerate' | 'publish' | 'unpublish' | 'close' | 'reset'
+  const [busy, setBusy] = useState(false);
   const [configError, setConfigError] = useState('');
 
-  const roster = useMemo(() => studentRosterService.list(), []);
-  const attempts = service.listAttempts();
-  const attemptByStudent = {};
-  attempts.forEach((a) => { if (!attemptByStudent[a.studentIdentifier]) attemptByStudent[a.studentIdentifier] = a; });
-
-  const { meta } = examState;
-  const verification = examState.verificationReport;
+  const masterQuestions = useMemo(() => data?.master || [], [data]);
+  const totalFromQuestions = masterQuestions.reduce((sum, q) => sum + q.marks, 0);
+  const marks = [...new Set(masterQuestions.map((q) => q.marks))];
+  const meta = {
+    courseCode: exam.courseCode,
+    courseTitle: exam.title,
+    semester: exam.semesterLabel,
+    examDate: examDateOf(exam),
+    durationMinutes: exam.durationMinutes,
+    instructions: exam.instructions,
+    totalQuestions: masterQuestions.length || 25,
+    totalMarks: exam.totalMarks ?? (totalFromQuestions || '—'),
+    marksPerQuestion: marks.length === 1 ? marks[0] : null,
+    negativeMarking: masterQuestions.some((q) => q.negativeMarks > 0),
+  };
+  const examState = {
+    isPublished: exam.isPublished,
+    publishedAt: exam.publishedAt,
+    patterns: data?.patterns || {},
+    masterQuestions,
+  };
+  const [configForm, setConfigForm] = useState(() => metaToForm(meta));
+  const candidates = data?.candidates || [];
+  const roster = candidates.filter((c) => c.assignmentStatus === 'assigned');
+  const verification = data?.verification && !exam.patternsStale ? data.verification : null;
   const currentPatternData = examState.patterns[selectedPattern];
-  const masterById = Object.fromEntries((examState.masterQuestions || []).map((q) => [q.id, q]));
+  const masterById = Object.fromEntries(masterQuestions.map((q) => [q.id, q]));
   const distribution = PATTERN_LABELS.map((label) => ({
     label,
-    count: roster.filter((s) => s.status === 'Eligible' && assignPatternForCandidate(s.usn) === label).length,
+    count: roster.filter((c) => c.patternLabel === label).length,
   }));
   const maxDist = Math.max(1, ...distribution.map((d) => d.count));
-  const activeAttempts = attempts.filter((a) => a.status === 'active').length;
-  const submittedAttempts = attempts.filter((a) => a.status === 'submitted').length;
+  const activeAttempts = candidates.filter((c) => c.attemptStatus === 'active').length;
+  const submittedAttempts = candidates.filter((c) => ['submitted', 'auto_submitted'].includes(c.attemptStatus)).length;
+  const hasAttempts = candidates.some((c) => ATTEMPTED.includes(c.attemptStatus));
+  const isDraft = exam.status === 'draft';
 
   const log = (action, details = '') => activityLogService.log({ action, category: 'exam', actor: user, target: meta.courseCode, details });
-  const refresh = (state) => {
-    setExamState({ ...state });
-    setConfigForm(metaToForm(state.meta));
+  const refresh = () => { reload(); reloadContext(); emitDataChanged(); };
+
+  /** Standard question set of the default (22CS601) examination: its first 25 bank questions. */
+  const resetToStandard = async () => {
+    const bank = (await questionsApi.list()).filter((q) => q.subjectCode === exam.courseCode).sort((x, y) => x.questionNo - y.questionNo);
+    if (bank.length < 25) throw new Error(`At least 25 ${exam.courseCode} questions are needed (${bank.length} in the bank).`);
+    const wasPublished = exam.isPublished;
+    if (wasPublished) await examsApi.unpublish(exam.id);
+    await examsApi.setQuestions(exam.id, bank.slice(0, 25).map((q) => q.id));
+    await examsApi.generatePatterns(exam.id);
+    if (wasPublished) await examsApi.publish(exam.id);
   };
 
-  const runConfirmed = () => {
+  const runConfirmed = async () => {
+    setBusy(true);
     try {
       if (confirm === 'regenerate') {
-        refresh(service.regeneratePatterns());
+        const report = await examsApi.generatePatterns(exam.id);
         log('Regenerated patterns A–J');
-        notify('Ten new patterns (A–J) were generated and verified.');
+        notify(report?.isValid === false ? 'Patterns generated but verification failed.' : 'Ten new patterns (A–J) were generated and verified.', report?.isValid === false ? 'error' : 'success');
       } else if (confirm === 'publish') {
-        refresh(service.publishExam());
-        log('Published examination');
+        const result = await examsApi.publish(exam.id);
+        log('Published examination', `${result?.patternsAllocated ?? 0} pattern(s) allocated`);
         notify('Examination published. Eligible candidates can now start.');
       } else if (confirm === 'unpublish') {
-        refresh(service.unpublishExam());
-        log('Unpublished examination', 'Returned to draft', 'warning');
+        await examsApi.unpublish(exam.id);
+        log('Unpublished examination', 'Returned to draft');
         notify('Examination returned to draft and hidden from candidates.', 'info');
+      } else if (confirm === 'close') {
+        await examsApi.close(exam.id);
+        log('Closed examination');
+        notify('Examination closed. No new attempts can start.', 'info');
       } else if (confirm === 'reset') {
-        refresh(service.resetToDefaults());
+        await resetToStandard();
         log('Reset examination to the standard question set');
         notify('Reset to the standard 25 questions and regenerated patterns.', 'info');
       }
-    } catch (error) {
-      notify(error.message || 'The action could not be completed.', 'error');
+    } catch (err) {
+      notify(err.message || 'The action could not be completed.', 'error');
+    } finally {
+      setBusy(false);
+      setConfirm(null);
+      refresh();
     }
-    setConfirm(null);
   };
 
-  const saveConfiguration = (event) => {
+  const saveConfiguration = async (event) => {
     event.preventDefault();
     setConfigError('');
+    const minutes = Number(configForm.durationMinutes);
+    const instructions = configForm.instructions.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (configForm.courseTitle.trim().length < 3) { setConfigError('Enter the examination title.'); return; }
+    if (!Number.isInteger(minutes) || minutes < 5 || minutes > 300) { setConfigError('Duration must be a whole number between 5 and 300 minutes.'); return; }
+    if (!instructions.length) { setConfigError('Add at least one candidate instruction.'); return; }
+    if (configForm.examDate && !/^\d{4}-\d{2}-\d{2}$/.test(configForm.examDate)) { setConfigError('Choose a valid examination date.'); return; }
+    setBusy(true);
     try {
-      refresh(service.updateExamMeta(configForm));
+      await examsApi.updateConfig(exam.id, {
+        title: configForm.courseTitle.trim(),
+        semesterLabel: configForm.semester.trim(),
+        durationMinutes: minutes,
+        instructions,
+        examDate: configForm.examDate !== meta.examDate ? configForm.examDate : undefined,
+      });
       log('Updated examination configuration');
       notify('Examination configuration saved.');
-    } catch (error) {
-      setConfigError(error.message);
+      refresh();
+    } catch (err) {
+      setConfigError(err.message);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -123,18 +211,17 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
       title: 'Regenerate all 10 patterns?',
       tone: 'warning',
       label: 'Regenerate patterns',
-      text: examState.isPublished
-        ? 'The examination is live. New attempts will use the new patterns; candidates already writing keep their saved paper.'
-        : 'Question and option order are re-randomised for patterns A–J.',
+      text: 'Question and option order are re-randomised for patterns A–J on the server.',
     },
-    publish: { title: 'Publish this examination?', tone: 'primary', label: 'Publish examination', text: 'Eligible candidates can start it. Configuration is locked while published.' },
-    unpublish: { title: 'Return the examination to draft?', tone: 'warning', label: 'Unpublish', text: 'Candidates can no longer start it. Attempts in progress continue.' },
-    reset: { title: 'Reset to the standard question set?', tone: 'danger', label: 'Reset question set', text: 'Restores the standard 25 questions, regenerates the patterns and republishes the examination.' },
+    publish: { title: 'Publish this examination?', tone: 'primary', label: 'Publish examination', text: 'Eligible candidates can start it and each is allocated a pattern. Configuration is locked while published.' },
+    unpublish: { title: 'Return the examination to draft?', tone: 'warning', label: 'Unpublish', text: 'Candidates can no longer start it.' },
+    close: { title: 'Close this examination?', tone: 'danger', label: 'Close examination', text: 'No new attempts can start. Attempts in progress are submitted when their time runs out.' },
+    reset: { title: 'Reset to the standard question set?', tone: 'danger', label: 'Reset question set', text: `Restores the standard 25 questions and regenerates the patterns${exam.isPublished ? ', then republishes the examination' : ''}. Not possible once attempts have started.` },
   }[confirm] || {};
 
   const tabs = [
     { id: 'configuration', label: 'Configuration' },
-    { id: 'questions', label: 'Question set', count: examState.masterQuestions?.length || 0 },
+    { id: 'questions', label: 'Question set', count: masterQuestions.length },
     { id: 'patterns', label: 'Pattern preview', count: Object.keys(examState.patterns).length },
     { id: 'verification', label: 'Verification' },
     { id: 'candidates', label: 'Candidate allocation', count: roster.length },
@@ -148,17 +235,21 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
         meta={(
           <>
             <span className="rounded-sm border border-slate-200 bg-white px-2 py-0.5 font-mono font-bold text-[#1E3A5F]">{meta.courseCode}</span>
-            <StatusBadge status={examState.isPublished ? 'Published' : 'Draft'} />
+            <StatusBadge status={exam.status === 'closed' ? 'Closed' : examState.isPublished ? 'Published' : 'Draft'} />
             <span>{meta.semester}</span>
           </>
         )}
         actions={(
           <>
             <ExamSwitcher summaries={summaries} value={examCode} onChange={selectExam} />
-            <Button variant="secondary" icon={RefreshCw} onClick={() => setConfirm('regenerate')}>Regenerate patterns</Button>
-            {examState.isPublished ? (
+            <Button variant="secondary" icon={RefreshCw} disabled={!isDraft || masterQuestions.length !== 25} title={isDraft ? undefined : 'Unpublish to regenerate patterns'} onClick={() => setConfirm('regenerate')}>Regenerate patterns</Button>
+            {examState.isPublished && !hasAttempts && (
               <Button variant="secondary" icon={Lock} onClick={() => setConfirm('unpublish')}>Unpublish</Button>
-            ) : (
+            )}
+            {examState.isPublished && hasAttempts && (
+              <Button variant="secondary" icon={Lock} onClick={() => setConfirm('close')}>Close examination</Button>
+            )}
+            {isDraft && (
               <Button variant="success" icon={Send} disabled={!verification?.isValid} onClick={() => setConfirm('publish')}>Publish examination</Button>
             )}
           </>
@@ -167,10 +258,10 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
 
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 max-lg:[&>*:last-child]:col-span-2 lg:grid-cols-5" aria-label="Examination status">
         {[
-          ['Status', examState.isPublished ? 'Published' : 'Draft', examState.isPublished ? `Since ${formatDateTime(examState.publishedAt)}` : 'Hidden from candidates'],
+          ['Status', exam.status === 'closed' ? 'Closed' : examState.isPublished ? 'Published' : 'Draft', examState.isPublished ? `Since ${formatDateTime(examState.publishedAt)}` : 'Hidden from candidates'],
           ['Patterns', `${Object.keys(examState.patterns).length} × 25`, verification?.isValid ? 'Integrity verified' : 'Verification failed'],
           ['Total marks', meta.totalMarks, meta.negativeMarking ? 'Negative marking on' : 'No negative marking'],
-          ['Duration', `${meta.durationMinutes} min`, meta.examDate],
+          ['Duration', `${meta.durationMinutes} min`, meta.examDate || ''],
           ['In progress / submitted', `${activeAttempts} / ${submittedAttempts}`, ''],
         ].map(([label, value, hint]) => (
           <div key={label} className="bg-white p-4">
@@ -181,7 +272,16 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
         ))}
       </section>
 
-      {!verification?.isValid && (
+      {error && (
+        <Alert tone="danger" title="Could not load examination data">
+          {error.message} <button type="button" className="ml-2 font-semibold underline" onClick={reload}>Try again</button>
+        </Alert>
+      )}
+      {loading && !data && <p className="text-sm text-slate-500" role="status">Loading examination…</p>}
+      {data && isDraft && masterQuestions.length !== 25 && (
+        <Alert tone="warning" title="Question set incomplete">Select exactly 25 questions in the Question Bank, then generate the patterns.</Alert>
+      )}
+      {data && masterQuestions.length === 25 && !verification?.isValid && (
         <Alert tone="danger" title="Pattern verification failed">Regenerate the patterns before publishing this examination.</Alert>
       )}
 
@@ -191,16 +291,16 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
         <TabPanel id="configuration" className={activeTab === 'configuration' ? 'pt-5' : 'hidden'}>
           <div className="grid gap-6 lg:grid-cols-3">
             <Card className="lg:col-span-2" title="Examination configuration">
-              {examState.isPublished && (
-                <Alert tone="info" className="mb-4">Locked while published. Unpublish to make changes.</Alert>
+              {!isDraft && (
+                <Alert tone="info" className="mb-4">{exam.status === 'closed' ? 'This examination is closed.' : 'Locked while published. Unpublish to make changes.'}</Alert>
               )}
               {configError && <Alert tone="danger" className="mb-4">{configError}</Alert>}
               <form onSubmit={saveConfiguration} className="space-y-4">
-                <fieldset disabled={examState.isPublished} className="grid gap-4 sm:grid-cols-2">
+                <fieldset disabled={!isDraft || busy} className="grid gap-4 sm:grid-cols-2">
                   <InputField label="Course code" value={meta.courseCode} disabled />
                   <InputField label="Course title" required value={configForm.courseTitle} onChange={(e) => setConfigForm({ ...configForm, courseTitle: e.target.value })} />
                   <InputField label="Semester / programme" value={configForm.semester} onChange={(e) => setConfigForm({ ...configForm, semester: e.target.value })} />
-                  <InputField label="Examination date" value={configForm.examDate} onChange={(e) => setConfigForm({ ...configForm, examDate: e.target.value })} />
+                  <InputField label="Examination date" type="date" value={configForm.examDate} onChange={(e) => setConfigForm({ ...configForm, examDate: e.target.value })} />
                   <InputField label="Duration (minutes)" type="number" min="5" max="300" required value={configForm.durationMinutes} onChange={(e) => setConfigForm({ ...configForm, durationMinutes: e.target.value })} />
                   <InputField label="Questions per paper" value="25 (fixed)" disabled />
                   <div className="sm:col-span-2">
@@ -215,10 +315,10 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
                     <p className="mt-1 text-[11px] text-slate-500">One instruction per line.</p>
                   </div>
                 </fieldset>
-                {!examState.isPublished && (
+                {isDraft && (
                   <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
-                    <Button variant="secondary" onClick={() => setConfigForm(metaToForm(meta))}>Discard changes</Button>
-                    <Button type="submit" icon={Save}>Save configuration</Button>
+                    <Button variant="secondary" onClick={() => setConfigForm(metaToForm(meta))} disabled={busy}>Discard changes</Button>
+                    <Button type="submit" icon={Save} isLoading={busy}>Save configuration</Button>
                   </div>
                 )}
               </form>
@@ -230,7 +330,7 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
                   ['Marks per question', meta.marksPerQuestion ?? 'Varies by question'],
                   ['Total marks', meta.totalMarks],
                   ['Negative marking', meta.negativeMarking ? 'Yes, per question' : 'No'],
-                  ['Pass threshold', '40%'],
+                  ['Pass threshold', `${exam.passPercentage}%`],
                   ['Paper patterns', '10 (A–J)'],
                 ].map(([k, v]) => (
                   <div key={k} className="flex justify-between gap-4 py-2.5">
@@ -309,6 +409,7 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
             </Button>
           </div>
 
+          {!currentPatternData && data && <EmptyState compact title="No patterns generated yet" />}
           {currentPatternData && (
             <Card
               title={`${currentPatternData.patternLabel} · ${currentPatternData.paperCode}`}
@@ -316,9 +417,9 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
             >
               <ol className="divide-y divide-slate-100">
                 {currentPatternData.questions.map((q, idx) => {
-                  const correctIdx = currentPatternData.answerKey[q.originalId];
+                  const correctIdx = q.correctOption;
                   return (
-                    <li key={q.originalId} className="px-5 py-4">
+                    <li key={q.displayNumber} className="px-5 py-4">
                       <div className="flex items-start justify-between gap-3">
                         <p className="text-[13px] font-medium text-slate-900">
                           <span className="mr-2 font-mono text-slate-500">Q{idx + 1}.</span>{q.text}
@@ -393,7 +494,7 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
 
         <TabPanel id="candidates" className={activeTab === 'candidates' ? 'space-y-6 pt-5' : 'hidden'}>
           <div className="grid gap-6 lg:grid-cols-3">
-            <Card title="Pattern distribution" subtitle="Eligible candidates per pattern">
+            <Card title="Pattern distribution" subtitle={isDraft ? 'Patterns are allocated when the examination is published' : 'Eligible candidates per pattern'}>
               <ul className="space-y-1.5">
                 {distribution.map((d) => (
                   <li key={d.label} className="flex items-center gap-3 text-xs">
@@ -408,7 +509,7 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
               className="lg:col-span-2"
               title="Candidate allocation"
                 bodyClassName="p-0"
-              action={<Link to="/admin/students" className="text-xs font-semibold text-[#1E3A5F] hover:underline">Manage candidates</Link>}
+              action={<Link to={`/admin/students?exam=${examCode}`} className="text-xs font-semibold text-[#1E3A5F] hover:underline">Manage candidates</Link>}
             >
               <Table className="rounded-none border-x-0 border-b-0">
                 <TableHeader>
@@ -421,20 +522,20 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {roster.map((s) => {
-                    const attempt = attemptByStudent[s.usn];
-                    return (
-                      <TableRow key={s.usn}>
-                        <TableCell className="font-mono font-semibold text-[#1E3A5F]">{s.usn}</TableCell>
-                        <TableCell>{s.name}<span className="block text-[11px] text-slate-500">Sem {s.semester} · Sec {s.section}</span></TableCell>
-                        <TableCell><StatusBadge status={s.status} size="sm" /></TableCell>
-                        <TableCell className="font-mono">{s.status === 'Eligible' ? `${assignPatternForCandidate(s.usn)} · ${meta.courseCode}-${assignPatternForCandidate(s.usn)}` : '—'}</TableCell>
-                        <TableCell>
-                          {attempt ? <StatusBadge status={attempt.status === 'active' ? 'In progress' : 'Submitted'} size="sm" /> : <span className="text-[11px] text-slate-400">Not started</span>}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
+                  {candidates.length === 0 && (
+                    <TableRow><TableCell colSpan={5} className="text-center text-xs text-slate-500">No candidates assigned yet.</TableCell></TableRow>
+                  )}
+                  {candidates.map((c) => (
+                    <TableRow key={c.assignmentId}>
+                      <TableCell className="font-mono font-semibold text-[#1E3A5F]">{c.usn}</TableCell>
+                      <TableCell>{c.name}</TableCell>
+                      <TableCell><StatusBadge status={c.assignmentStatus === 'assigned' ? 'Eligible' : 'Withheld'} size="sm" /></TableCell>
+                      <TableCell className="font-mono">{c.patternLabel ? `${c.patternLabel} · ${c.paperCode}` : '—'}</TableCell>
+                      <TableCell>
+                        {c.attemptId ? <StatusBadge status={c.attemptStatus === 'active' ? 'In progress' : 'Submitted'} size="sm" /> : <span className="text-[11px] text-slate-400">Not started</span>}
+                      </TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
             </Card>
@@ -455,6 +556,7 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
         isOpen={Boolean(confirm)}
         onClose={() => setConfirm(null)}
         onConfirm={runConfirmed}
+        isLoading={busy}
         title={confirmCopy.title}
         tone={confirmCopy.tone}
         confirmLabel={confirmCopy.label}
@@ -465,36 +567,46 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
 }
 
 /** Create a subject examination (draft) from that subject's question bank. */
-function CreateExamPanel({ service, examCode, scope, summaries, selectExam, onCreated }) {
+function CreateExamPanel({ subject, examCode, summaries, selectExam, onCreated }) {
   const { user } = useAuth();
   const { notify } = useToast();
-  const subject = subjectByCode(examCode);
-  const subjectQuestions = scopedQuestionBank(scope).getQuestions()
-    .filter((q) => q.subject === subject.title)
-    .sort((a, b) => a.id - b.id);
-  const defaults = defaultSubjectMeta(examCode);
-  const [form, setForm] = useState({ courseTitle: defaults.courseTitle, examDate: '', durationMinutes: defaults.durationMinutes });
+  const { settings } = useSettings();
+  const bank = useAsync(async () => (await questionsApi.list())
+    .filter((q) => q.subjectCode === examCode)
+    .sort((a, b) => a.questionNo - b.questionNo), [examCode]);
+  const subjectQuestions = bank.data || [];
+  const [form, setForm] = useState({ courseTitle: subject.title, examDate: '', durationMinutes: 45 });
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const create = (event) => {
+  const create = async (event) => {
     event.preventDefault();
     setError('');
     const minutes = Number(form.durationMinutes);
     if (!Number.isInteger(minutes) || minutes < 5 || minutes > 300) { setError('Duration must be a whole number between 5 and 300 minutes.'); return; }
+    if (form.examDate && !/^\d{4}-\d{2}-\d{2}$/.test(form.examDate)) { setError('Choose a valid examination date.'); return; }
     if (subjectQuestions.length < 25) { setError(`At least 25 ${subject.title} questions are needed (${subjectQuestions.length} in the bank).`); return; }
+    setBusy(true);
     try {
-      service.createExam(
-        { ...defaults, courseTitle: form.courseTitle.trim() || defaults.courseTitle, examDate: form.examDate.trim() || 'To be announced', durationMinutes: minutes },
-        subjectQuestions.slice(0, 25).map((q) => ({
-          id: Number(q.id), text: q.statement, options: [...q.options], correctOption: Number(q.correctOption),
-          subject: q.subject, topic: q.topic, difficulty: q.difficulty, marks: Number(q.marks), negativeMarks: Number(q.negativeMarks),
-        })),
-      );
+      const examId = await examsApi.create({
+        subject,
+        title: form.courseTitle.trim() || subject.title,
+        examDate: form.examDate,
+        durationMinutes: minutes,
+        semesterLabel: subject.semester ? `Semester ${subject.semester}` : '',
+        instructions: DEFAULT_INSTRUCTIONS,
+        resultDisplay: settings.resultDisplay,
+      });
+      await examsApi.setQuestions(examId, subjectQuestions.slice(0, 25).map((q) => q.id));
+      await examsApi.generatePatterns(examId);
       activityLogService.log({ action: 'Created examination', category: 'exam', actor: user, target: examCode, details: subject.title });
       notify(`${examCode} created as a draft with 10 patterns (${examCode}-A … -J).`);
       onCreated();
     } catch (err) {
       setError(err.message);
+      onCreated();
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -507,14 +619,14 @@ function CreateExamPanel({ service, examCode, scope, summaries, selectExam, onCr
         description="No examination yet."
         actions={<ExamSwitcher summaries={summaries} value={examCode} onChange={selectExam} />}
       />
-      <Card title="Create examination" subtitle={`First 25 of ${subjectQuestions.length} questions`} className="max-w-2xl">
-        {error && <Alert tone="danger" className="mb-4">{error}</Alert>}
+      <Card title="Create examination" subtitle={bank.loading && !bank.data ? 'Loading question bank…' : `First 25 of ${subjectQuestions.length} questions`} className="max-w-2xl">
+        {(error || bank.error) && <Alert tone="danger" className="mb-4">{error || bank.error.message}</Alert>}
         <form onSubmit={create} className="grid gap-4 sm:grid-cols-2">
           <InputField className="sm:col-span-2" label="Examination title" value={form.courseTitle} onChange={(e) => setForm({ ...form, courseTitle: e.target.value })} />
-          <InputField label="Examination date" placeholder="e.g. 05 Dec 2026" value={form.examDate} onChange={(e) => setForm({ ...form, examDate: e.target.value })} />
+          <InputField label="Examination date" type="date" value={form.examDate} onChange={(e) => setForm({ ...form, examDate: e.target.value })} helperText="Blank = open for 30 days" />
           <InputField label="Duration (minutes)" type="number" min="5" max="300" value={form.durationMinutes} onChange={(e) => setForm({ ...form, durationMinutes: e.target.value })} />
           <div className="flex justify-end sm:col-span-2">
-            <Button type="submit" icon={Send}>Create examination</Button>
+            <Button type="submit" icon={Send} isLoading={busy} disabled={!bank.data}>Create examination</Button>
           </div>
         </form>
       </Card>
@@ -523,30 +635,16 @@ function CreateExamPanel({ service, examCode, scope, summaries, selectExam, onCr
 }
 
 export default function ExamManagementPage() {
-  const { scope, examCode, allowed, service, selectExam, summaries } = useAdminExamContext();
-  const [, setCreatedVersion] = useState(0);
-  if (!allowed || !service) return <ScopeDenied examCode={examCode} scope={scope} />;
-  if (!service.exists()) {
-    return (
-      <CreateExamPanel
-        key={examCode}
-        service={service}
-        examCode={examCode}
-        scope={scope}
-        summaries={summaries}
-        selectExam={selectExam}
-        onCreated={() => setCreatedVersion((v) => v + 1)}
-      />
-    );
-  }
+  const ctx = useAdminExamContext();
   return (
-    <ExamConsole
-      key={examCode}
-      service={service}
-      examCode={examCode}
-      summaries={summaries}
-      selectExam={selectExam}
-      isDefaultExam={examCode === DEFAULT_EXAM_CODE}
-    />
+    <AdminExamGate ctx={ctx} eyebrow="Examinations" title="Examination" requireExam={false}>
+      {(c) => {
+        if (!c.exam) {
+          if (!c.subject) return <ScopeDenied examCode={c.examCode} scope={c.scope} />;
+          return <CreateExamPanel key={c.examCode} subject={c.subject} examCode={c.examCode} summaries={c.summaries} selectExam={c.selectExam} onCreated={() => { c.reload(); emitDataChanged(); }} />;
+        }
+        return <ExamConsole key={c.exam.id} {...c} isDefaultExam={c.examCode === DEFAULT_EXAM_CODE} />;
+      }}
+    </AdminExamGate>
   );
 }

@@ -32,7 +32,7 @@ export default function ProtectedRoute({ allowedRoles = [] }) {
 
   // Accounts with a temporary password must set their own password first.
   if (user?.mustChangePassword && location.pathname !== '/change-password') {
-    return <Navigate to="/change-password" replace />;
+    return <Navigate to={user.recoverySession ? '/reset-password' : '/change-password'} replace />;
   }
 
   // Role validation if specific roles are required
