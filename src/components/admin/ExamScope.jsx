@@ -63,7 +63,7 @@ export function ExamNotCreated({ eyebrow = 'Examinations', title, examCode, summ
           <span className="font-mono">{examCode}</span>{subject ? ` · ${subject.title}` : ''} has no examination yet
         </p>
         <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-slate-600">
-          Create the examination from your subject's question bank to generate patterns A–J. Candidates and results appear here once it is created.
+          Create it to generate patterns A–J.
         </p>
         <Link to={`/admin/exams?exam=${examCode}`} className="mt-5 inline-flex h-9 items-center rounded-sm bg-[#1E3A5F] px-4 text-xs font-semibold text-white hover:bg-[#152A45]">
           Create examination

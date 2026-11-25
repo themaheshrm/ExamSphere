@@ -19,12 +19,10 @@ export const examMeta = {
   marksPerQuestion: 2,
   negativeMarking: false,
   instructions: [
-    'This examination contains 25 Multiple Choice Questions (MCQ).',
-    'Each question carries 2 marks. There is no negative marking.',
-    'Select exactly one option for each question.',
-    'You may navigate freely between questions using Previous / Next or the question palette.',
-    'Use "Mark for Review" if you wish to revisit a question before submitting.',
-    'The examination will auto-submit when the timer reaches zero.',
+    '25 multiple-choice questions, 2 marks each. No negative marking.',
+    'Select one option per question.',
+    'You can revisit questions and change answers until you submit. Use Mark for review to flag a question.',
+    'The examination is submitted automatically when time runs out.',
     'Once submitted, answers cannot be changed.',
   ],
 };

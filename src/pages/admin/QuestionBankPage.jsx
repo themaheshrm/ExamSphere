@@ -254,9 +254,7 @@ export default function QuestionBankPage() {
       <PageHeader
         eyebrow="Examination Office"
         title="Question Bank"
-        description={scopedSubject
-          ? `${scopedSubject.code} · ${scopedSubject.title}. Create, import and review questions for your subject. Select exactly 25 to form its examination's question set.`
-          : "Create, import and review multiple-choice questions. Select exactly 25 to form an examination's master question set."}
+        description={scopedSubject ? `${scopedSubject.code} · ${scopedSubject.title}` : undefined}
         actions={(
           <>
             <Button variant="secondary" icon={Upload} onClick={openImport}>Import CSV / Excel</Button>
@@ -318,7 +316,7 @@ export default function QuestionBankPage() {
           <EmptyState
             icon={BookOpen}
             title={questions.length ? 'No questions match these filters' : 'The question bank is empty'}
-            description={questions.length ? 'Adjust or clear the filters to see more questions.' : 'Add questions manually or import them from a CSV or Excel file.'}
+            
             action={questions.length ? <Button variant="secondary" size="sm" onClick={resetFilters}>Clear filters</Button> : <Button size="sm" icon={Plus} onClick={openCreate}>Add question</Button>}
           />
         ) : (
@@ -409,7 +407,6 @@ export default function QuestionBankPage() {
         isOpen={questionModal}
         onClose={() => setQuestionModal(false)}
         title={editingQuestion ? `Edit question ${editingQuestion.id}` : 'Add question'}
-        subtitle="Four distinct options and exactly one correct answer are required."
         maxWidth="max-w-3xl"
         footer={(
           <>
@@ -425,7 +422,7 @@ export default function QuestionBankPage() {
             </Alert>
           )}
           <div className="grid gap-4 sm:grid-cols-2">
-            <InputField label="Subject" required list="qb-subjects" value={form.subject} readOnly={Boolean(scopedSubject)} helperText={scopedSubject ? 'Fixed to your assigned subject' : undefined} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="e.g. Software Engineering" />
+            <InputField label="Subject" required list="qb-subjects" value={form.subject} readOnly={Boolean(scopedSubject)} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="e.g. Software Engineering" />
             <InputField label="Topic / unit" required list="qb-topics" value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} placeholder="e.g. Unit 2 – Design Patterns" />
             <datalist id="qb-subjects">{subjects.map((s) => <option key={s} value={s} />)}</datalist>
             <datalist id="qb-topics">{[...new Set(questions.map((q) => q.topic))].map((t) => <option key={t} value={t} />)}</datalist>
@@ -471,7 +468,7 @@ export default function QuestionBankPage() {
               </div>
             </fieldset>
             <InputField label="Marks" type="number" min="0.5" step="0.5" required value={form.marks} onChange={(e) => setForm({ ...form, marks: e.target.value })} />
-            <InputField label="Negative marks" type="number" min="0" step="0.25" value={form.negativeMarks} onChange={(e) => setForm({ ...form, negativeMarks: e.target.value })} helperText="0 for no penalty" />
+            <InputField label="Negative marks" type="number" min="0" step="0.25" value={form.negativeMarks} onChange={(e) => setForm({ ...form, negativeMarks: e.target.value })} />
           </div>
         </form>
       </Modal>
@@ -483,7 +480,7 @@ export default function QuestionBankPage() {
         tone="danger"
         title="Delete question?"
         confirmLabel="Delete question"
-        description="This permanently removes the question from the bank. Examinations already generated keep their own copy."
+        description="The question is removed permanently. Generated examinations keep their copy."
       >
         {deleteTarget && <p className="rounded-sm border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800">{deleteTarget.statement}</p>}
       </ConfirmDialog>
@@ -495,14 +492,13 @@ export default function QuestionBankPage() {
         tone="warning"
         title="Replace the examination question set?"
         confirmLabel="Replace and regenerate"
-        description="The selected 25 questions become the master set and patterns A–J are regenerated immediately. Candidates already writing keep their saved paper."
+        description="These 25 questions become the master set and patterns A–J are regenerated. Attempts in progress keep their paper."
       />
 
       <Modal
         isOpen={importModal}
         onClose={() => setImportModal(false)}
-        title="Import questions from CSV or Excel"
-        subtitle="Rows are validated before anything is added to the bank."
+        title="Import questions"
         maxWidth="max-w-5xl"
         footer={(
           <>
@@ -512,23 +508,11 @@ export default function QuestionBankPage() {
           </>
         )}
       >
-        <ol className="mb-5 grid gap-3 sm:grid-cols-3">
-          {[
-            ['1', 'Download the template', 'Required columns in the right order.'],
-            ['2', 'Upload your file', '.csv, .xlsx or .xls — first sheet is read.'],
-            ['3', 'Review and import', 'Only rows marked Ready are imported.'],
-          ].map(([n, title, text]) => (
-            <li key={n} className="flex gap-3 rounded-sm border border-slate-200 bg-slate-50 p-3">
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-[#1E3A5F] text-[11px] font-bold text-white">{n}</span>
-              <span><span className="block text-xs font-semibold text-slate-900">{title}</span><span className="text-[11px] text-slate-600">{text}</span></span>
-            </li>
-          ))}
-        </ol>
 
         <div className="flex flex-col items-start gap-3 rounded-sm border border-dashed border-slate-300 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-xs text-slate-600">
             <p className="font-semibold text-slate-900">{importFileName || 'No file selected'}</p>
-            <p className="mt-0.5">Columns: {QUESTION_IMPORT_HEADERS.join(', ')}. Correct Answer accepts A–D or 1–4.</p>
+            <p className="mt-0.5">Columns: {QUESTION_IMPORT_HEADERS.join(', ')} · Correct Answer: A–D or 1–4 · .csv, .xlsx, .xls</p>
           </div>
           <div className="flex shrink-0 gap-2">
             <Button variant="secondary" size="sm" icon={Download} onClick={downloadQuestionTemplate}>Template</Button>

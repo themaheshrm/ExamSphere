@@ -26,7 +26,7 @@ function Step({ done, label, detail, to }) {
       <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${done ? 'text-emerald-600' : 'text-slate-300'}`} aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <p className={`text-xs font-semibold ${done ? 'text-slate-900' : 'text-slate-700'}`}>{label}</p>
-        <p className="text-[11px] text-slate-500">{detail}</p>
+        {detail && <p className="text-[11px] text-slate-500">{detail}</p>}
       </div>
       {to && !done && <Link to={to} className="shrink-0 text-[11px] font-semibold text-[#1E3A5F] hover:underline">Open</Link>}
     </li>
@@ -70,7 +70,7 @@ function DashboardView({ service, examCode, summaries, selectExam, scope }) {
       <PageHeader
         eyebrow="Examination Office"
         title="Dashboard"
-        description={`Welcome, ${(user?.name || 'Administrator').replace(/\.$/, '')}. ${scope.scoped ? `Assigned subject: ${scope.label}.` : 'Track the current examination, candidates and submissions.'}`}
+        description={scope.scoped ? `Assigned subject: ${scope.label}` : undefined}
         actions={(
           <>
             <ExamSwitcher summaries={summaries} value={examCode} onChange={selectExam} />
@@ -115,33 +115,32 @@ function DashboardView({ service, examCode, summaries, selectExam, scope }) {
           <div className="lg:col-span-2 lg:border-l lg:border-slate-200 lg:pl-6">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Readiness checklist</p>
             <ol className="divide-y divide-slate-100">
-              <Step done={data.questions.length >= 25} label="Question bank has 25+ questions" detail={`${data.questions.length} questions available`} to={`/admin/questions${q}`} />
-              <Step done={(exam.masterQuestions?.length ?? 0) === 25} label="25 questions selected" detail="Master set for this examination" to={`/admin/questions${q}`} />
-              <Step done={verified} label="10 patterns generated and verified" detail="Patterns A–J with independent option order" to={`/admin/exams${q}`} />
+              <Step done={data.questions.length >= 25} label="Question bank has 25+ questions" detail={`${data.questions.length} in bank`} to={`/admin/questions${q}`} />
+              <Step done={(exam.masterQuestions?.length ?? 0) === 25} label="25 questions selected" to={`/admin/questions${q}`} />
+              <Step done={verified} label="10 patterns generated and verified" to={`/admin/exams${q}`} />
               <Step done={data.eligible > 0} label="Candidates eligible" detail={`${data.eligible} of ${data.roster.length} on the roster`} to={`/admin/students${q}`} />
-              <Step done={exam.isPublished} label="Examination published" detail={exam.isPublished ? 'Visible to candidates' : 'Hidden from candidates'} to={`/admin/exams${q}`} />
+              <Step done={exam.isPublished} label="Examination published" to={`/admin/exams${q}`} />
             </ol>
           </div>
         </div>
       </section>
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Key figures">
-        <StatCard title="Question bank" value={data.questions.length} hint="Validated MCQs available" icon={HelpCircle} onClick={() => navigate(`/admin/questions${q}`)} />
-        <StatCard title="Eligible candidates" value={`${data.eligible}/${data.roster.length}`} hint="On the examination roster" icon={Users} tone="success" onClick={() => navigate(`/admin/students${q}`)} />
-        <StatCard title="Attempts in progress" value={data.active} hint={data.active ? 'Candidates writing now' : 'No live attempts'} icon={Timer} tone={data.active ? 'warning' : 'neutral'} onClick={() => navigate(`/admin/results${q}`)} />
-        <StatCard title="Answer sheets evaluated" value={data.submitted.length} hint={data.avg === null ? 'No submissions yet' : `Average ${data.avg.toFixed(1)}%`} icon={ClipboardList} onClick={() => navigate(`/admin/results${q}`)} />
+        <StatCard title="Question bank" value={data.questions.length} icon={HelpCircle} onClick={() => navigate(`/admin/questions${q}`)} />
+        <StatCard title="Eligible candidates" value={`${data.eligible}/${data.roster.length}`} icon={Users} tone="success" onClick={() => navigate(`/admin/students${q}`)} />
+        <StatCard title="Attempts in progress" value={data.active} icon={Timer} tone={data.active ? 'warning' : 'neutral'} onClick={() => navigate(`/admin/results${q}`)} />
+        <StatCard title="Answer sheets evaluated" value={data.submitted.length} hint={data.avg === null ? undefined : `Average ${data.avg.toFixed(1)}%`} icon={ClipboardList} onClick={() => navigate(`/admin/results${q}`)} />
       </section>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card
           className="lg:col-span-2"
           title="Recent submissions"
-          subtitle="Latest evaluated answer sheets"
           action={<Link to={`/admin/results${q}`} className="text-xs font-semibold text-[#1E3A5F] hover:underline">All results</Link>}
           bodyClassName="p-0"
         >
           {data.submitted.length === 0 ? (
-            <EmptyState compact icon={ClipboardList} title="No submissions yet" description="Evaluated answer sheets appear here as candidates submit." />
+            <EmptyState compact icon={ClipboardList} title="No submissions yet" />
           ) : (
             <Table className="rounded-none border-0">
               <TableHeader>
@@ -171,9 +170,9 @@ function DashboardView({ service, examCode, summaries, selectExam, scope }) {
           )}
         </Card>
 
-        <Card title="Recent activity" subtitle="Actions recorded in this portal" bodyClassName="p-0">
+        <Card title="Recent activity" bodyClassName="p-0">
           {data.activity.length === 0 ? (
-            <EmptyState compact title="No activity yet" description="Publishing, imports and submissions are recorded here." />
+            <EmptyState compact title="No activity yet" />
           ) : (
             <ul className="divide-y divide-slate-100">
               {data.activity.map((e) => (

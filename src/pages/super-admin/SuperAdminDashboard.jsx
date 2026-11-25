@@ -33,7 +33,6 @@ export default function SuperAdminDashboard() {
       <PageHeader
         eyebrow="Platform Administration"
         title="Overview"
-        description={`Staff accounts, examination status and portal activity for ${INSTITUTION.name}.`}
         actions={(
           <>
             <Button variant="secondary" icon={Building2} onClick={() => navigate('/super-admin/organizations')}>Institution profile</Button>
@@ -43,7 +42,7 @@ export default function SuperAdminDashboard() {
       />
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Platform figures">
-        <StatCard title="Question bank" value={questionBankService.getQuestions().length} hint="Validated MCQs" icon={HelpCircle} onClick={() => navigate('/admin/questions')} />
+        <StatCard title="Question bank" value={questionBankService.getQuestions().length} icon={HelpCircle} onClick={() => navigate('/admin/questions')} />
         <StatCard title="Staff accounts" value={users.length} hint={`${users.filter((u) => u.status === 'Active').length} active accounts`} icon={UserCog} onClick={() => navigate('/super-admin/users')} />
         <StatCard title="Candidates on roster" value={roster.length} hint={`${exam.meta.courseCode} · ${INSTITUTION.shortName}`} icon={Users} tone="success" />
         <StatCard title="Answer sheets" value={attempts.filter((a) => a.status === 'submitted').length} hint={`${attempts.filter((a) => a.status === 'active').length} attempt(s) in progress`} icon={ClipboardList} tone="neutral" onClick={() => navigate('/admin/results')} />
@@ -53,7 +52,6 @@ export default function SuperAdminDashboard() {
         <Card
           className="lg:col-span-2"
           title="Examination office staff"
-          subtitle={`Administrators of ${INSTITUTION.office}`}
           bodyClassName="p-0"
           action={<Link to="/super-admin/users" className="text-xs font-semibold text-[#1E3A5F] hover:underline">Manage</Link>}
         >
@@ -77,7 +75,7 @@ export default function SuperAdminDashboard() {
           </Table>
         </Card>
 
-        <Card title="Current examination" subtitle={INSTITUTION.name}>
+        <Card title="Current examination">
           <p className="font-mono text-xs font-bold text-[#1E3A5F]">{exam.meta.courseCode}</p>
           <p className="mt-0.5 text-sm font-semibold text-slate-900">{exam.meta.courseTitle}</p>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -98,7 +96,7 @@ export default function SuperAdminDashboard() {
 
       <Card title="Recent platform activity" bodyClassName="p-0" action={<Link to="/super-admin/activity" className="text-xs font-semibold text-[#1E3A5F] hover:underline">Activity logs</Link>}>
         {activity.length === 0 ? (
-          <EmptyState compact icon={ScrollText} title="No activity recorded yet" description="Administrative actions and submissions appear here." />
+          <EmptyState compact icon={ScrollText} title="No activity recorded yet" />
         ) : (
           <ul className="divide-y divide-slate-100">
             {activity.map((e) => (

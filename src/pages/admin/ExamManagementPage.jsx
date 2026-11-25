@@ -125,11 +125,11 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
       label: 'Regenerate patterns',
       text: examState.isPublished
         ? 'The examination is live. New attempts will use the new patterns; candidates already writing keep their saved paper.'
-        : 'Question order and option order are re-randomised for patterns A–J.',
+        : 'Question and option order are re-randomised for patterns A–J.',
     },
-    publish: { title: 'Publish this examination?', tone: 'primary', label: 'Publish examination', text: 'Eligible candidates will see the examination and can start it. Configuration is locked while it is published.' },
-    unpublish: { title: 'Return the examination to draft?', tone: 'warning', label: 'Unpublish', text: 'Candidates will no longer be able to start it. Attempts already in progress continue on their saved paper.' },
-    reset: { title: 'Reset to the standard question set?', tone: 'danger', label: 'Reset question set', text: 'The master set returns to the standard 25 verified questions and patterns are regenerated. The examination returns to its default published state.' },
+    publish: { title: 'Publish this examination?', tone: 'primary', label: 'Publish examination', text: 'Eligible candidates can start it. Configuration is locked while published.' },
+    unpublish: { title: 'Return the examination to draft?', tone: 'warning', label: 'Unpublish', text: 'Candidates can no longer start it. Attempts in progress continue.' },
+    reset: { title: 'Reset to the standard question set?', tone: 'danger', label: 'Reset question set', text: 'Restores the standard 25 questions, regenerates the patterns and republishes the examination.' },
   }[confirm] || {};
 
   const tabs = [
@@ -171,12 +171,12 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
           ['Patterns', `${Object.keys(examState.patterns).length} × 25`, verification?.isValid ? 'Integrity verified' : 'Verification failed'],
           ['Total marks', meta.totalMarks, meta.negativeMarking ? 'Negative marking on' : 'No negative marking'],
           ['Duration', `${meta.durationMinutes} min`, meta.examDate],
-          ['Attempts', `${activeAttempts} / ${submittedAttempts}`, 'In progress / submitted'],
+          ['In progress / submitted', `${activeAttempts} / ${submittedAttempts}`, ''],
         ].map(([label, value, hint]) => (
           <div key={label} className="bg-white p-4">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
             <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{value}</p>
-            <p className="text-[11px] text-slate-500">{hint}</p>
+            {hint && <p className="text-[11px] text-slate-500">{hint}</p>}
           </div>
         ))}
       </section>
@@ -190,19 +190,17 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
 
         <TabPanel id="configuration" className={activeTab === 'configuration' ? 'pt-5' : 'hidden'}>
           <div className="grid gap-6 lg:grid-cols-3">
-            <Card className="lg:col-span-2" title="Examination configuration" subtitle="Shown to candidates on the instruction screen.">
+            <Card className="lg:col-span-2" title="Examination configuration">
               {examState.isPublished && (
-                <Alert tone="info" className="mb-4" title="Configuration is locked while published">
-                  Unpublish the examination to make changes. Candidates already writing keep their own copy of these settings.
-                </Alert>
+                <Alert tone="info" className="mb-4">Locked while published. Unpublish to make changes.</Alert>
               )}
               {configError && <Alert tone="danger" className="mb-4">{configError}</Alert>}
               <form onSubmit={saveConfiguration} className="space-y-4">
                 <fieldset disabled={examState.isPublished} className="grid gap-4 sm:grid-cols-2">
-                  <InputField label="Course code" value={meta.courseCode} disabled helperText="Fixed: used in paper codes (e.g. 22CS601-A)" />
+                  <InputField label="Course code" value={meta.courseCode} disabled />
                   <InputField label="Course title" required value={configForm.courseTitle} onChange={(e) => setConfigForm({ ...configForm, courseTitle: e.target.value })} />
                   <InputField label="Semester / programme" value={configForm.semester} onChange={(e) => setConfigForm({ ...configForm, semester: e.target.value })} />
-                  <InputField label="Examination date" value={configForm.examDate} onChange={(e) => setConfigForm({ ...configForm, examDate: e.target.value })} helperText="As printed on hall tickets" />
+                  <InputField label="Examination date" value={configForm.examDate} onChange={(e) => setConfigForm({ ...configForm, examDate: e.target.value })} />
                   <InputField label="Duration (minutes)" type="number" min="5" max="300" required value={configForm.durationMinutes} onChange={(e) => setConfigForm({ ...configForm, durationMinutes: e.target.value })} />
                   <InputField label="Questions per paper" value="25 (fixed)" disabled />
                   <div className="sm:col-span-2">
@@ -225,7 +223,7 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
                 )}
               </form>
             </Card>
-            <Card title="Marking scheme" subtitle="Derived from the selected questions">
+            <Card title="Marking scheme">
               <dl className="divide-y divide-slate-100 text-xs">
                 {[
                   ['Questions', meta.totalQuestions],
@@ -248,7 +246,6 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
         <TabPanel id="questions" className={activeTab === 'questions' ? 'pt-5' : 'hidden'}>
           <Card
             title="Master question set"
-            subtitle="All 10 patterns are permutations of these 25 questions."
             bodyClassName="p-0"
             action={(
               <div className="flex flex-wrap gap-2">
@@ -315,7 +312,6 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
           {currentPatternData && (
             <Card
               title={`${currentPatternData.patternLabel} · ${currentPatternData.paperCode}`}
-              subtitle={`Opens with bank question ${currentPatternData.questions[0].originalId}, ends with ${currentPatternData.questions[24].originalId}`}
               bodyClassName="p-0"
             >
               <ol className="divide-y divide-slate-100">
@@ -370,7 +366,7 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
             </ul>
           </Card>
 
-          <Card title="Permutation matrix" subtitle="Bank question shown at each position of every pattern" bodyClassName="p-0" action={<Grid3x3 className="h-4 w-4 text-slate-400" aria-hidden="true" />}>
+          <Card title="Permutation matrix" bodyClassName="p-0" action={<Grid3x3 className="h-4 w-4 text-slate-400" aria-hidden="true" />}>
             <div className="max-h-[32rem] overflow-auto">
               <table className="w-full min-w-[720px] text-center text-xs">
                 <thead className="sticky top-0 bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500">
@@ -407,13 +403,11 @@ function ExamConsole({ service, examCode, summaries, selectExam, isDefaultExam }
                   </li>
                 ))}
               </ul>
-              <p className="mt-4 text-[11px] leading-relaxed text-slate-500">Patterns are assigned automatically from each candidate's USN. Candidates cannot choose or change their pattern.</p>
             </Card>
             <Card
               className="lg:col-span-2"
               title="Candidate allocation"
-              subtitle="Assigned pattern and attempt status"
-              bodyClassName="p-0"
+                bodyClassName="p-0"
               action={<Link to="/admin/students" className="text-xs font-semibold text-[#1E3A5F] hover:underline">Manage candidates</Link>}
             >
               <Table className="rounded-none border-x-0 border-b-0">
@@ -510,10 +504,10 @@ function CreateExamPanel({ service, examCode, scope, summaries, selectExam, onCr
         eyebrow="Examinations"
         title={subject.title}
         meta={<span className="rounded-sm border border-slate-200 bg-white px-2 py-0.5 font-mono font-bold text-[#1E3A5F]">{examCode}</span>}
-        description="No examination exists for this subject yet. Create it from this subject's question bank."
+        description="No examination yet."
         actions={<ExamSwitcher summaries={summaries} value={examCode} onChange={selectExam} />}
       />
-      <Card title="Create examination" subtitle={`Uses the first 25 of ${subjectQuestions.length} ${subject.short} questions; change the set later from the Question Bank.`} className="max-w-2xl">
+      <Card title="Create examination" subtitle={`First 25 of ${subjectQuestions.length} questions`} className="max-w-2xl">
         {error && <Alert tone="danger" className="mb-4">{error}</Alert>}
         <form onSubmit={create} className="grid gap-4 sm:grid-cols-2">
           <InputField className="sm:col-span-2" label="Examination title" value={form.courseTitle} onChange={(e) => setForm({ ...form, courseTitle: e.target.value })} />

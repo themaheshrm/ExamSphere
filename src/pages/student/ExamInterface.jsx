@@ -410,7 +410,7 @@ export default function ExamInterface() {
           <section className="rounded-sm border border-slate-200 bg-white lg:col-span-2">
             <div className="border-b border-slate-200 px-5 py-4">
               <h1 className="text-base font-semibold text-slate-900">Instructions to candidates</h1>
-              <p className="mt-0.5 text-xs text-slate-500">Read carefully. Your examination time is already running.</p>
+              <p className="mt-0.5 text-xs text-amber-700">The timer is already running.</p>
             </div>
             <div className="space-y-5 px-5 py-5 text-sm leading-relaxed text-slate-700">
               <ol className="list-decimal space-y-2 pl-5">
@@ -420,18 +420,18 @@ export default function ExamInterface() {
                   {studentExam.marksPerQuestion !== null ? `Each question carries ${studentExam.marksPerQuestion} marks.` : 'Marks are shown with each question.'}{' '}
                   {studentExam.negativeMarking ? 'Incorrect answers attract the negative marks shown with each question.' : 'There is no negative marking.'}
                 </li>}
-                <li>Questions and answer options are arranged differently for each candidate. Answer the paper exactly as shown on your screen.</li>
+                <li>Question and option order is unique to your paper.</li>
               </ol>
 
               <div>
-                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Question palette legend</h2>
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Question status</h2>
                 <ul className="grid gap-2 text-xs sm:grid-cols-2">
                   {[
                     [Q_STATUS.NOT_VISITED, 'Not visited'],
-                    [Q_STATUS.NOT_ANSWERED, 'Visited, not answered'],
+                    [Q_STATUS.NOT_ANSWERED, 'Not answered'],
                     [Q_STATUS.ANSWERED, 'Answered'],
-                    [Q_STATUS.MARKED, 'Marked for review (not answered)'],
-                    [Q_STATUS.MARKED_ANSWERED, 'Answered and marked for review (will be evaluated)'],
+                    [Q_STATUS.MARKED, 'Marked, not answered'],
+                    [Q_STATUS.MARKED_ANSWERED, 'Answered & marked (evaluated)'],
                   ].map(([status, label], i) => (
                     <li key={status} className="flex items-center gap-2">
                       <span className="w-9 shrink-0" aria-hidden="true"><PaletteButton decorative number={i + 1} status={status} /></span>
@@ -441,15 +441,6 @@ export default function ExamInterface() {
                 </ul>
               </div>
 
-              <div>
-                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Keyboard shortcuts</h2>
-                <p className="text-xs text-slate-600">
-                  <kbd className="rounded-sm border border-slate-300 bg-slate-50 px-1 font-mono">A</kbd>–<kbd className="rounded-sm border border-slate-300 bg-slate-50 px-1 font-mono">D</kbd> select option ·{' '}
-                  <kbd className="rounded-sm border border-slate-300 bg-slate-50 px-1 font-mono">N</kbd> next ·{' '}
-                  <kbd className="rounded-sm border border-slate-300 bg-slate-50 px-1 font-mono">P</kbd> previous ·{' '}
-                  <kbd className="rounded-sm border border-slate-300 bg-slate-50 px-1 font-mono">M</kbd> mark for review
-                </p>
-              </div>
             </div>
           </section>
 
@@ -478,7 +469,7 @@ export default function ExamInterface() {
             <section className="rounded-sm border border-slate-200 bg-white p-5">
               <label className="flex cursor-pointer items-start gap-3 text-sm text-slate-800">
                 <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-[#1E3A5F]" />
-                I have read and understood the instructions. I will not use unfair means during this examination.
+                I have read the instructions and will not use unfair means.
               </label>
               <Button size="lg" className="mt-4 w-full" disabled={!acknowledged} onClick={() => setShowInstructionsModal(false)} rightIcon={ChevronRight}>
                 {answeredCount > 0 ? 'Resume examination' : 'Start examination'}
@@ -532,7 +523,7 @@ export default function ExamInterface() {
               </div>
             ) : (
               <p className="p-5 text-sm leading-relaxed text-slate-700">
-                Your responses have been recorded and evaluated. Results will be published by the {INSTITUTION.office}.
+                Your answer sheet has been recorded. Results will be published by the {INSTITUTION.office}.
               </p>
             )}
 
@@ -554,7 +545,6 @@ export default function ExamInterface() {
               <Button onClick={() => navigate('/student?tab=results')}>Return to student portal</Button>
             </div>
           </div>
-          <p className="mt-4 text-center text-[11px] text-slate-500">This is a provisional, system-generated result. The examination office publishes final results.</p>
         </main>
       </div>
     );
@@ -660,7 +650,6 @@ export default function ExamInterface() {
                   );
                 })}
               </div>
-              <p className="mt-6 hidden text-[11px] text-slate-400 sm:block">Shortcuts: A–D select · N next · P previous · M mark for review</p>
             </fieldset>
           </div>
 

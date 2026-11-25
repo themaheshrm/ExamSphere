@@ -33,12 +33,12 @@ import { formatDateTime } from '../../utils/format';
 import { INSTITUTION, USER_ROLES } from '../../utils/constants';
 
 const TAB_TITLES = {
-  dashboard: ['Candidate Dashboard', 'Your examinations, results and notices in one place.'],
-  exams: ['My Examinations', 'Timetable for the current examination session.'],
-  results: ['Results & History', 'Provisional CBT results and your statement of marks.'],
-  notifications: ['Notifications', 'Examination alerts and official circulars.'],
-  profile: ['My Profile', 'Academic record as maintained by the institution.'],
-  support: ['Help & Support', 'Who to contact for examination matters.'],
+  dashboard: ['Dashboard', null],
+  exams: ['My Examinations', null],
+  results: ['Results', null],
+  notifications: ['Notifications', null],
+  profile: ['My Profile', null],
+  support: ['Help & Support', null],
 };
 
 export default function StudentDashboard() {
@@ -181,13 +181,13 @@ export default function StudentDashboard() {
             </div>
             {activeAttempt && (
               <div className="border-t border-amber-200 bg-amber-50 px-5 py-2.5 text-xs text-amber-900">
-                You started this examination on {formatDateTime(activeAttempt.startedAt)}. Resume now — the timer continues while you are away.
+                Attempt in progress since {formatDateTime(activeAttempt.startedAt)}. The timer is running.
               </div>
             )}
           </section>
 
           {subjectExams.length > 0 && (
-            <Card title="Subject examinations" subtitle="Published by your subject examiners" bodyClassName="p-0">
+            <Card title="Subject examinations" bodyClassName="p-0">
               <ul className="divide-y divide-slate-100">
                 {subjectExams.map((exam) => (
                   <li key={exam.subject.code} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -412,12 +412,11 @@ export default function StudentDashboard() {
         <div className="grid gap-6 lg:grid-cols-2">
           <Card
             title="Alerts"
-            subtitle="About your examinations"
             bodyClassName="p-0"
             action={unread.length > 0 && <Button size="sm" variant="ghost" icon={CheckCheck} onClick={() => notificationService.markRead(user, notifications.map((n) => n.id))}>Mark all read</Button>}
           >
             {notifications.length === 0 ? (
-              <EmptyState compact icon={Bell} title="No notifications" description="You're up to date." />
+              <EmptyState compact icon={Bell} title="No notifications" />
             ) : (
               <ul className="divide-y divide-slate-100">
                 {notifications.map((n) => (
@@ -432,7 +431,7 @@ export default function StudentDashboard() {
               </ul>
             )}
           </Card>
-          <Card title="Official circulars" subtitle="Office of the Controller of Examinations" bodyClassName="p-0">
+          <Card title="Official circulars" bodyClassName="p-0">
             <ul className="divide-y divide-slate-100">
               {announcements.map((a) => (
                 <li key={a.id} className="flex gap-3 px-5 py-4">
@@ -472,7 +471,6 @@ export default function StudentDashboard() {
                 </div>
               ))}
             </dl>
-            <p className="mt-4 text-[11px] text-slate-500">To correct any detail, contact your department examination coordinator.</p>
           </Card>
           <div className="space-y-6">
             <Card title="Examination eligibility">
@@ -484,7 +482,6 @@ export default function StudentDashboard() {
               </dl>
             </Card>
             <Card title="Password">
-              <p className="mb-3 text-xs text-slate-600">A reset link will be sent to your registered institutional email.</p>
               <Button variant="secondary" icon={KeyRound} isLoading={sendingReset} onClick={resetPassword} className="w-full">Send password reset link</Button>
             </Card>
           </div>
@@ -493,32 +490,14 @@ export default function StudentDashboard() {
 
       {/* ═══ SUPPORT ═══ */}
       {activeTab === 'support' && (
-        <div className="grid gap-6 lg:grid-cols-3">
-          <Card title="Examination help desk" className="lg:col-span-1">
+        <div className="max-w-md">
+          <Card title="Examination help desk">
             <dl className="space-y-3 text-sm">
               <div><dt className="text-[11px] text-slate-500">Helpline</dt><dd className="font-semibold text-slate-900">{settings.helplinePhone}</dd></div>
               <div><dt className="text-[11px] text-slate-500">Email</dt><dd><a className="font-semibold text-[#1E3A5F] hover:underline" href={`mailto:${settings.supportEmail}`}>{settings.supportEmail}</a></dd></div>
               <div><dt className="text-[11px] text-slate-500">Office</dt><dd className="text-slate-900">Central Administrative Block, 2nd Floor, Dr. AIT Campus</dd></div>
               <div><dt className="text-[11px] text-slate-500">Hours</dt><dd className="text-slate-900">Monday – Friday, 9:30 AM – 5:00 PM</dd></div>
             </dl>
-          </Card>
-          <Card title="Frequently asked questions" className="lg:col-span-2" bodyClassName="p-0">
-            <div className="divide-y divide-slate-100">
-              {[
-                ['My browser closed during the examination. What happens?', 'Sign in again on the same device and choose Resume examination. Your saved answers are restored; the timer keeps running while you are away.'],
-                ['Why does my question order differ from my neighbour\'s?', 'Each candidate receives one of ten paper patterns with a different question and option order. All patterns contain the same questions and are marked against their own key.'],
-                ['What does "Marked for review" mean at submission?', 'A marked question that has an answer is evaluated normally. A marked question without an answer scores zero.'],
-                ['Can I change an answer after submitting?', 'No. Submission is final. Review the summary carefully before you confirm.'],
-              ].map(([q, a]) => (
-                <details key={q} className="group px-5 py-3">
-                  <summary className="flex items-center justify-between gap-3 text-sm font-medium text-slate-900 marker:content-none">
-                    {q}
-                    <span className="text-slate-400 transition-transform group-open:rotate-90" aria-hidden="true">›</span>
-                  </summary>
-                  <p className="mt-2 text-xs leading-relaxed text-slate-600">{a}</p>
-                </details>
-              ))}
-            </div>
           </Card>
         </div>
       )}
@@ -528,7 +507,6 @@ export default function StudentDashboard() {
         isOpen={Boolean(detailsExam)}
         onClose={() => setDetailsExam(null)}
         title={detailsExam === 'current' ? `${meta.courseCode} · ${meta.courseTitle}` : detailsExam ? `${detailsExam.courseCode} · ${detailsExam.courseTitle}` : ''}
-        subtitle="Examination details"
         maxWidth="max-w-lg"
         footer={detailsExam === 'current' ? (
           <>

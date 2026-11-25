@@ -64,10 +64,10 @@ export function defaultSubjectMeta(code) {
     examDate: '',
     durationMinutes: 45,
     instructions: [
-      'This examination contains 25 Multiple Choice Questions (MCQ).',
-      'Each question carries 2 marks. There is no negative marking.',
-      'Select exactly one option for each question.',
-      'The examination will auto-submit when the timer reaches zero.',
+      '25 multiple-choice questions, 2 marks each. No negative marking.',
+      'Select one option per question.',
+      'You can revisit questions and change answers until you submit. Use Mark for review to flag a question.',
+      'The examination is submitted automatically when time runs out.',
       'Once submitted, answers cannot be changed.',
     ],
   };

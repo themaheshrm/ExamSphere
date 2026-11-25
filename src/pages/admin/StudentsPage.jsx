@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Ban, CheckCircle2, Copy, Download, Edit3, KeyRound, Plus, RotateCcw, Search, Trash2, UserPlus, Users } from 'lucide-react';
+import { Ban, CheckCircle2, Copy, Download, Edit3, Plus, RotateCcw, Search, Trash2, UserPlus, Users } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
 import InputField from '../../components/common/InputField';
@@ -193,7 +193,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
       <PageHeader
         eyebrow="Examinations"
         title="Candidates"
-        description={`${canEditRoster ? 'Roster and eligibility' : 'Candidates and attempts'} for ${meta.courseCode} — ${meta.courseTitle}. Withheld candidates cannot start the examination.`}
+        description={`${meta.courseCode} — ${meta.courseTitle}`}
         actions={(
           <>
             <ExamSwitcher summaries={summaries} value={examCode} onChange={selectExam} />
@@ -242,7 +242,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
         )}
 
         {filtered.length === 0 ? (
-          <EmptyState icon={Users} title={roster.length ? 'No candidates match' : 'No candidates yet'} description={roster.length ? 'Try a different search or filter.' : 'Add candidates to build the examination roster.'} action={canEditRoster && !roster.length && <Button size="sm" icon={Plus} onClick={() => openForm(null)}>Add student</Button>} />
+          <EmptyState icon={Users} title={roster.length ? 'No candidates match' : 'No candidates yet'} action={canEditRoster && !roster.length && <Button size="sm" icon={Plus} onClick={() => openForm(null)}>Add student</Button>} />
         ) : (
           <>
             <Table className="rounded-none border-x-0 border-b-0">
@@ -302,7 +302,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
         isOpen={Boolean(editing)}
         onClose={() => setEditing(null)}
         title={editing === 'new' ? 'Add student' : `Edit ${editing}`}
-        subtitle={editing === 'new' ? 'Creates the student’s sign-in account and a one-time temporary password.' : 'Candidates are matched to their login by USN.'}
+        subtitle={editing === 'new' ? 'Creates the sign-in account with a temporary password.' : undefined}
         maxWidth="max-w-2xl"
         footer={(
           <>
@@ -315,7 +315,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
           {fieldErrors.form && <div className="sm:col-span-2"><Alert tone="danger">{fieldErrors.form}</Alert></div>}
           <InputField label="Full name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} error={fieldErrors.name} />
           <InputField label="USN / Student ID" required value={form.usn} disabled={editing !== 'new'} onChange={(e) => setForm({ ...form, usn: e.target.value.toUpperCase() })} error={fieldErrors.usn} placeholder="1DA22CS011" inputClassName="font-mono uppercase" />
-          <InputField label="Email address" type="email" value={form.email} disabled={editing !== 'new'} onChange={(e) => setForm({ ...form, email: e.target.value })} error={fieldErrors.email} helperText={editing === 'new' ? 'Leave blank to use usn@drait.edu.in (sign-in email)' : 'Sign-in email'} />
+          <InputField label="Email address" type="email" value={form.email} disabled={editing !== 'new'} onChange={(e) => setForm({ ...form, email: e.target.value })} error={fieldErrors.email} helperText={editing === 'new' ? 'Blank = usn@drait.edu.in' : undefined} />
           <InputField label="Mobile number" type="tel" required={editing === 'new'} value={form.mobile || ''} onChange={(e) => setForm({ ...form, mobile: e.target.value })} error={fieldErrors.mobile} placeholder="+91 98450 12345" />
           <InputField label="Department" required value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} error={fieldErrors.department} />
           <InputField label="Semester" type="number" min="1" max="8" required value={form.semester} onChange={(e) => setForm({ ...form, semester: e.target.value })} error={fieldErrors.semester} />
@@ -327,7 +327,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
               <option>Withheld</option>
             </select>
           </div>}
-          {editing !== 'new' && <InputField label="Remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} helperText="Reason when withheld (e.g. attendance shortage)" />}
+          {editing !== 'new' && <InputField label="Remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />}
         </form>
       </Modal>
 
@@ -335,7 +335,6 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
         isOpen={Boolean(credentials)}
         onClose={closeCredentials}
         title="Student account created"
-        subtitle="Share these sign-in details with the student. The password is shown only once."
         maxWidth="max-w-md"
         footer={(
           <>
@@ -355,9 +354,8 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
               ))}
             </dl>
             <Alert tone="warning" title="Shown once">
-              The temporary password is not stored anywhere in ExamSphere and cannot be displayed again. The student must set a new password at first sign-in. If it is lost, create a reset from Supabase Auth.
+              The password is not stored and cannot be shown again. The student must change it at first sign-in.
             </Alert>
-            <p className="flex items-start gap-2 text-xs text-slate-600"><KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />The student signs in on the Student Login tab with the Student ID and this password.</p>
           </div>
         )}
       </Modal>
@@ -385,7 +383,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
         tone="warning"
         title="Reset demo attempts?"
         confirmLabel="Reset demo attempts"
-        description={`Clears attempts and provisional results for the ${demoUsns.length} demo account(s) only (${demoUsns.join(', ')}) so the randomisation demo can be run again. Real candidates are never affected, and assigned patterns do not change.`}
+        description={`Clears attempts and results for demo accounts only (${demoUsns.join(', ')}). Patterns stay assigned.`}
       />
 
       <ConfirmDialog
@@ -395,7 +393,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
         tone="danger"
         title="Remove candidate from roster?"
         confirmLabel="Remove"
-        description={removeTarget ? `${removeTarget.usn} · ${removeTarget.name} will be removed from the roster. Any submitted answer sheet is kept in the results register.` : ''}
+        description={removeTarget ? `${removeTarget.usn} · ${removeTarget.name}. Submitted answer sheets are kept.` : ''}
       />
     </div>
   );
