@@ -12,14 +12,15 @@ import StatusBadge from '../../components/common/StatusBadge';
 import Badge from '../../components/common/Badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useToast } from '../../components/common/Toast';
-import { studentRosterService } from '../../services/studentRosterService';
 import { studentAccountService } from '../../services/studentAccountService';
 import Alert from '../../components/common/Alert';
 import CredentialsDialog from '../../components/common/CredentialsDialog';
 import { useAdminExamContext } from '../../utils/useAdminExamContext';
-import { ExamSwitcher, ExamNotCreated, ScopeDenied } from '../../components/admin/ExamScope';
+import { ExamSwitcher, AdminExamGate } from '../../components/admin/ExamScope';
+import { examsApi } from '../../services/api/examsApi';
+import { rosterApi } from '../../services/api/rosterApi';
+import { useAsync, useAutoReload, emitDataChanged } from '../../utils/useAsync';
 import { activityLogService } from '../../services/activityLogService';
-import { assignPatternForCandidate } from '../../utils/patternAssignment';
 import { usePagination } from '../../utils/usePagination';
 import { downloadText, toCsv } from '../../services/localStore';
 import { useAuth } from '../../context/AuthContext';
@@ -27,13 +28,40 @@ import { useAuth } from '../../context/AuthContext';
 const EMPTY = { usn: '', name: '', email: '', mobile: '', department: 'Computer Science & Engineering', semester: 6, section: 'A', status: 'Eligible', remarks: '' };
 const selectCls = 'es-select h-9 w-full rounded-sm border border-slate-300 bg-white pl-3 text-sm focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]';
 
-function StudentsView({ service, examCode, summaries, selectExam, scope }) {
+const STATUS_OF = { assigned: 'Eligible', revoked: 'Withheld' };
+const DEMO_RESET_REASON = 'Demo account reset: fresh attempt allowed by the administrator.';
+
+async function loadRoster(examId) {
+  const [students, candidates] = await Promise.all([rosterApi.list(), examsApi.candidates(examId)]);
+  const byStudent = Object.fromEntries(candidates.map((c) => [c.studentId, c]));
+  return students.map((st) => {
+    const c = byStudent[st.id] || null;
+    return {
+      ...st,
+      demo: st.pinned,
+      candidate: c,
+      status: c ? STATUS_OF[c.assignmentStatus] || 'Eligible' : 'Not assigned',
+      remarks: c?.revokeReason || (st.isActive ? '' : 'Account deactivated'),
+    };
+  });
+}
+
+function attemptOf(s) {
+  const c = s.candidate;
+  if (!c?.attemptId) return null;
+  const done = ['submitted', 'auto_submitted'].includes(c.attemptStatus);
+  return { status: done ? 'submitted' : 'active', result: done ? { score: c.score, maxScore: c.maxScore } : null };
+}
+
+function StudentsView({ exam, examCode, summaries, selectExam, scope }) {
   const { user } = useAuth();
   // Subject-scoped admins view candidates of their examination; the roster
   // itself (add / edit / eligibility) stays with the institution admin.
   const canEditRoster = !scope.scoped;
   const { notify } = useToast();
-  const [roster, setRoster] = useState(() => studentRosterService.list());
+  const { data, error, loading, reload } = useAsync(() => loadRoster(exam.id), [exam.id]);
+  useAutoReload(reload, 30000);
+  const roster = useMemo(() => data || [], [data]);
   const [search, setSearch] = useState('');
   const [section, setSection] = useState('');
   const [status, setStatus] = useState('');
@@ -42,6 +70,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
   const [form, setForm] = useState(EMPTY);
   const [fieldErrors, setFieldErrors] = useState({});
   const [creating, setCreating] = useState(false);
+  const [busy, setBusy] = useState(false);
   // One-time credentials of the account just created. Held only in this
   // component's memory; cleared when the dialog closes; never persisted.
   const [credentials, setCredentials] = useState(null);
@@ -49,29 +78,38 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
   const [withholdOpen, setWithholdOpen] = useState(false);
   const [withholdReason, setWithholdReason] = useState('');
 
-  const meta = service.getExamState().meta;
-  const [, setAttemptsVersion] = useState(0); // bumped to re-read attempts after a demo reset
+  const meta = { courseCode: exam.courseCode, courseTitle: exam.courseTitle };
   const [resetDemoOpen, setResetDemoOpen] = useState(false);
-  const attempts = {};
-  service.listAttempts().forEach((a) => { if (!attempts[a.studentIdentifier]) attempts[a.studentIdentifier] = a; });
+  const attempts = Object.fromEntries(roster.map((s) => [s.usn, attemptOf(s)]).filter(([, a]) => a));
+  const byUsn = Object.fromEntries(roster.map((s) => [s.usn, s]));
 
-  const refresh = () => setRoster(studentRosterService.list());
-  const demoUsns = roster.filter((s) => s.demo).map((s) => s.usn);
-
-  const resetDemoAttempts = () => {
-    try {
-      const removed = service.resetDemoAttempts(demoUsns);
-      log('Reset demo attempts', `${demoUsns.length} demo account(s)`, `${removed} attempt(s) cleared`);
-      notify(`Demo attempts reset (${removed} cleared). Assigned patterns do not change.`);
-      setAttemptsVersion((v) => v + 1);
-    } catch (error) {
-      notify(error.message, 'error');
-    }
-    setResetDemoOpen(false);
-  };
+  const refresh = () => { reload(); emitDataChanged(); };
+  const demoRows = roster.filter((s) => s.demo);
+  const demoUsns = demoRows.map((s) => s.usn);
   const log = (action, target, details) => activityLogService.log({ action, category: 'candidate', actor: user, target, details });
 
-  const sections = [...new Set(roster.map((s) => s.section))].sort();
+  /** Run one server call per candidate; report partial failures. */
+  const runEach = async (rows, call) => {
+    const failures = [];
+    for (const row of rows) {
+      try { await call(row); } catch (err) { failures.push(`${row.usn}: ${err.message}`); }
+    }
+    return failures;
+  };
+
+  const resetDemoAttempts = async () => {
+    setBusy(true);
+    const targets = demoRows.filter((s) => attempts[s.usn]?.status === 'submitted');
+    const failures = await runEach(targets, (s) => examsApi.grantRetake(s.candidate.assignmentId, DEMO_RESET_REASON));
+    setBusy(false);
+    setResetDemoOpen(false);
+    log('Reset demo attempts', `${demoUsns.length} demo account(s)`, `${targets.length - failures.length} fresh attempt(s) allowed`);
+    if (failures.length) notify(failures.join(' · '), 'error');
+    else notify(`Demo accounts can sit the examination again (${targets.length} reset). Assigned patterns do not change.`);
+    refresh();
+  };
+
+  const sections = [...new Set(roster.map((s) => s.section).filter(Boolean))].sort();
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return roster.filter((s) => (!term || `${s.usn} ${s.name} ${s.email}`.toLowerCase().includes(term))
@@ -97,16 +135,18 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
     try {
       // Server-side: Supabase Auth user + student profile + temporary password.
       const { student, credentials: issued } = await studentAccountService.createStudent(form);
-      // Local roster (exam eligibility in this build) — never holds the password.
-      const entry = { ...form, usn: student.usn, name: student.name, email: student.email, mobile: student.mobile, department: student.department, semester: student.semester, section: student.section };
-      const existing = studentRosterService.find(student.usn);
-      studentRosterService.save(existing ? { ...existing, ...entry, status: existing.status, remarks: existing.remarks } : entry, existing ? existing.usn : null);
       log('Created student account', student.usn, `${student.name} · login ${student.email}`);
+      // New students become candidates of the examination being managed.
+      try {
+        await examsApi.assign(exam.id, [student.id]);
+      } catch (err) {
+        notify(`${student.usn} was created but could not be added to ${meta.courseCode}: ${err.message}`, 'warning');
+      }
       setEditing(null);
       setCredentials(issued);
       refresh();
-    } catch (error) {
-      setFieldErrors(error.fieldErrors || { form: error.message });
+    } catch (err) {
+      setFieldErrors(err.fieldErrors || { form: err.message });
     } finally {
       setCreating(false);
     }
@@ -122,40 +162,80 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
 
   const closeCredentials = () => setCredentials(null);
 
-  const saveCandidate = (event) => {
+  const setEligibility = async (rows, next, reason) => {
+    if (next === 'Eligible') {
+      const ids = rows.filter((s) => s.status !== 'Eligible').map((s) => s.id);
+      if (ids.length) await examsApi.assign(exam.id, ids);
+      return [];
+    }
+    return runEach(rows.filter((s) => s.status === 'Eligible'), (s) => examsApi.revoke(s.candidate.assignmentId, reason));
+  };
+
+  const saveCandidate = async (event) => {
     event.preventDefault();
     if (!canEditRoster) return;
     if (editing === 'new') { createStudent(); return; }
+    const errors = {};
+    if (form.name.trim().length < 2) errors.name = 'Enter the full name.';
+    const sem = Number(form.semester);
+    if (!Number.isInteger(sem) || sem < 1 || sem > 8) errors.semester = 'Semester must be 1–8.';
+    if (!/^[A-Z]$/.test(String(form.section || '').toUpperCase())) errors.section = 'One letter, A–Z.';
+    if (form.status === 'Withheld' && byUsn[editing]?.status !== 'Withheld' && String(form.remarks || '').trim().length < 3) errors.remarks = 'Give a reason for withholding.';
+    if (Object.keys(errors).length) { setFieldErrors(errors); return; }
+    setCreating(true);
     try {
-      const saved = studentRosterService.save(form, editing === 'new' ? null : editing);
-      log(editing === 'new' ? 'Added candidate' : 'Updated candidate', saved.usn, saved.name);
-      notify(editing === 'new' ? `${saved.usn} added to the roster.` : `${saved.usn} updated.`);
+      const original = byUsn[editing];
+      await rosterApi.update(original.id, { name: form.name.trim(), semester: sem, section: form.section.toUpperCase() });
+      if (form.status !== original.status && form.status !== 'Not assigned') {
+        const failures = await setEligibility([original], form.status, String(form.remarks || '').trim());
+        if (failures.length) throw new Error(failures.join(' · '));
+      }
+      log('Updated candidate', original.usn, form.name.trim());
+      notify(`${original.usn} updated.`);
       setEditing(null);
       refresh();
-    } catch (error) {
-      setFieldErrors(error.fieldErrors || { form: error.message });
+    } catch (err) {
+      setFieldErrors(err.fieldErrors || { form: err.message });
+    } finally {
+      setCreating(false);
     }
   };
 
-  const applyStatus = (next, reason = '') => {
+  const applyStatus = async (next, reason = '') => {
     if (!canEditRoster) return;
-    studentRosterService.setStatus(selected, next, reason);
-    log(next === 'Withheld' ? 'Withheld candidates' : 'Restored candidate eligibility', `${selected.length} candidate(s)`, reason);
-    notify(`${selected.length} candidate${selected.length === 1 ? '' : 's'} marked ${next.toLowerCase()}.`, next === 'Withheld' ? 'warning' : 'success');
+    setBusy(true);
+    const rows = selected.map((u) => byUsn[u]).filter(Boolean);
+    let failures;
+    try {
+      failures = await setEligibility(rows, next, reason);
+    } catch (err) {
+      failures = [err.message];
+    }
+    setBusy(false);
+    log(next === 'Withheld' ? 'Withheld candidates' : 'Restored candidate eligibility', `${rows.length} candidate(s)`, reason);
+    if (failures.length) notify(failures.join(' · '), 'error');
+    else notify(`${rows.length} candidate${rows.length === 1 ? '' : 's'} marked ${next.toLowerCase()}.`, next === 'Withheld' ? 'warning' : 'success');
     setSelected([]);
     setWithholdOpen(false);
     setWithholdReason('');
     refresh();
   };
 
-  const confirmRemove = () => {
+  const confirmRemove = async () => {
     if (!canEditRoster) return;
-    studentRosterService.remove(removeTarget.usn);
-    log('Removed candidate', removeTarget.usn, removeTarget.name);
-    notify(`${removeTarget.usn} removed from the roster.`);
-    setSelected((s) => s.filter((u) => u !== removeTarget.usn));
-    setRemoveTarget(null);
-    refresh();
+    setBusy(true);
+    try {
+      await examsApi.revoke(removeTarget.candidate.assignmentId, 'Removed from this examination by the administrator.');
+      log('Removed candidate', removeTarget.usn, `${removeTarget.name} · ${meta.courseCode}`);
+      notify(`${removeTarget.usn} removed from ${meta.courseCode}.`);
+      setSelected((cur) => cur.filter((u) => u !== removeTarget.usn));
+    } catch (err) {
+      notify(err.message, 'error');
+    } finally {
+      setBusy(false);
+      setRemoveTarget(null);
+      refresh();
+    }
   };
 
   const exportCsv = () => {
@@ -167,7 +247,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
       { label: 'Semester', value: (s) => s.semester },
       { label: 'Section', value: (s) => s.section },
       { label: 'Eligibility', value: (s) => s.status },
-      { label: 'Pattern', value: (s) => assignPatternForCandidate(s.usn) },
+      { label: 'Pattern', value: (s) => s.candidate?.patternLabel || '' },
       { label: 'Attempt', value: (s) => attempts[s.usn]?.status || 'not started' },
       { label: 'Score', value: (s) => attempts[s.usn]?.result?.score ?? '' },
     ]));
@@ -196,6 +276,13 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
         )}
       />
 
+      {error && (
+        <Alert tone="danger" title="Could not load candidates">
+          {error.message} <button type="button" className="ml-2 font-semibold underline" onClick={reload}>Try again</button>
+        </Alert>
+      )}
+      {loading && !data && <p className="text-sm text-slate-500" role="status">Loading candidates…</p>}
+
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 lg:grid-cols-4" aria-label="Roster summary">
         {[['On roster', counts.total], ['Eligible', counts.eligible], ['Withheld', counts.withheld], ['Submitted', counts.submitted]].map(([k, v]) => (
           <div key={k} className="bg-white p-4">
@@ -216,6 +303,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
             <option value="">All eligibility</option>
             <option value="Eligible">Eligible</option>
             <option value="Withheld">Withheld</option>
+            <option value="Not assigned">Not assigned</option>
             <option value="demo">Demo accounts</option>
           </select>
         </div>
@@ -224,7 +312,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-[#F0F4F8] px-4 py-2.5 text-xs" aria-live="polite">
             <span className="font-semibold text-[#1E3A5F]">{selected.length} selected</span>
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="secondary" icon={CheckCircle2} onClick={() => applyStatus('Eligible')}>Mark eligible</Button>
+              <Button size="sm" variant="secondary" icon={CheckCircle2} onClick={() => applyStatus('Eligible')} disabled={busy}>Mark eligible</Button>
               <Button size="sm" variant="secondary" icon={Ban} onClick={() => setWithholdOpen(true)}>Withhold</Button>
               <Button size="sm" variant="ghost" onClick={() => setSelected([])}>Clear</Button>
             </div>
@@ -264,7 +352,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
                         <StatusBadge status={s.status} size="sm" />
                         {s.remarks && <p className="mt-1 max-w-48 text-[11px] text-slate-500">{s.remarks}</p>}
                       </TableCell>
-                      <TableCell className="hidden font-mono sm:table-cell">{assignPatternForCandidate(s.usn)}</TableCell>
+                      <TableCell className="hidden font-mono sm:table-cell">{s.candidate?.patternLabel || '—'}</TableCell>
                       <TableCell className="hidden sm:table-cell">
                         {!attempt && <span className="text-[11px] text-slate-400">Not started</span>}
                         {attempt?.status === 'active' && <StatusBadge status="In progress" size="sm" />}
@@ -275,7 +363,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
                       {canEditRoster && <TableCell align="right">
                         <div className="flex justify-end gap-1">
                           <button type="button" aria-label={`Edit ${s.usn}`} onClick={() => openForm(s)} className="rounded-sm p-2 text-slate-500 hover:bg-slate-100 hover:text-[#1E3A5F]"><Edit3 className="h-4 w-4" /></button>
-                          <button type="button" aria-label={`Remove ${s.usn}`} onClick={() => setRemoveTarget(s)} className="rounded-sm p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700"><Trash2 className="h-4 w-4" /></button>
+                          {s.status === 'Eligible' && !attempts[s.usn] && <button type="button" aria-label={`Remove ${s.usn}`} onClick={() => setRemoveTarget(s)} className="rounded-sm p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700"><Trash2 className="h-4 w-4" /></button>}
                         </div>
                       </TableCell>}
                     </TableRow>
@@ -306,8 +394,8 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
           <InputField label="Full name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} error={fieldErrors.name} />
           <InputField label="USN / Student ID" required value={form.usn} disabled={editing !== 'new'} onChange={(e) => setForm({ ...form, usn: e.target.value.toUpperCase() })} error={fieldErrors.usn} placeholder="1DA22CS011" inputClassName="font-mono uppercase" />
           <InputField label="Email address" type="email" value={form.email} disabled={editing !== 'new'} onChange={(e) => setForm({ ...form, email: e.target.value })} error={fieldErrors.email} helperText={editing === 'new' ? 'Blank = usn@drait.edu.in' : undefined} />
-          <InputField label="Mobile number" type="tel" required={editing === 'new'} value={form.mobile || ''} onChange={(e) => setForm({ ...form, mobile: e.target.value })} error={fieldErrors.mobile} placeholder="+91 98450 12345" />
-          <InputField label="Department" required value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} error={fieldErrors.department} />
+          <InputField label="Mobile number" type="tel" required={editing === 'new'} disabled={editing !== 'new'} value={editing === 'new' ? form.mobile || '' : form.phone || ''} onChange={(e) => setForm({ ...form, mobile: e.target.value })} error={fieldErrors.mobile} placeholder="+91 98450 12345" />
+          <InputField label="Department" required value={form.department} disabled={editing !== 'new'} onChange={(e) => setForm({ ...form, department: e.target.value })} error={fieldErrors.department} />
           <InputField label="Semester" type="number" min="1" max="8" required value={form.semester} onChange={(e) => setForm({ ...form, semester: e.target.value })} error={fieldErrors.semester} />
           <InputField label="Section" required maxLength={1} value={form.section} onChange={(e) => setForm({ ...form, section: e.target.value.toUpperCase() })} error={fieldErrors.section} />
           {editing !== 'new' && <div>
@@ -315,9 +403,10 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
             <select id="cand-status" className={selectCls} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
               <option>Eligible</option>
               <option>Withheld</option>
+              {form.status === 'Not assigned' && <option>Not assigned</option>}
             </select>
           </div>}
-          {editing !== 'new' && <InputField label="Remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />}
+          {editing !== 'new' && <InputField label="Remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} error={fieldErrors.remarks} helperText={form.status === 'Withheld' ? 'Reason for withholding' : undefined} />}
         </form>
       </Modal>
 
@@ -338,7 +427,7 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
         footer={(
           <>
             <Button variant="secondary" onClick={() => setWithholdOpen(false)}>Cancel</Button>
-            <Button variant="danger" disabled={withholdReason.trim().length < 3} onClick={() => applyStatus('Withheld', withholdReason.trim())}>Withhold</Button>
+            <Button variant="danger" isLoading={busy} disabled={withholdReason.trim().length < 3} onClick={() => applyStatus('Withheld', withholdReason.trim())}>Withhold</Button>
           </>
         )}
       >
@@ -349,20 +438,22 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
         isOpen={resetDemoOpen}
         onClose={() => setResetDemoOpen(false)}
         onConfirm={resetDemoAttempts}
+        isLoading={busy}
         tone="warning"
         title="Reset demo attempts?"
         confirmLabel="Reset demo attempts"
-        description={`Clears attempts and results for demo accounts only (${demoUsns.join(', ')}). Patterns stay assigned.`}
+        description={`Allows one more attempt for demo accounts that have submitted (${demoUsns.join(', ')}). Earlier answer sheets are kept; patterns stay assigned.`}
       />
 
       <ConfirmDialog
         isOpen={Boolean(removeTarget)}
         onClose={() => setRemoveTarget(null)}
         onConfirm={confirmRemove}
+        isLoading={busy}
         tone="danger"
-        title="Remove candidate from roster?"
+        title="Remove candidate from this examination?"
         confirmLabel="Remove"
-        description={removeTarget ? `${removeTarget.usn} · ${removeTarget.name}. Submitted answer sheets are kept.` : ''}
+        description={removeTarget ? `${removeTarget.usn} · ${removeTarget.name}. The student account is kept and can be made eligible again.` : ''}
       />
     </div>
   );
@@ -370,7 +461,9 @@ function StudentsView({ service, examCode, summaries, selectExam, scope }) {
 
 export default function StudentsPage() {
   const ctx = useAdminExamContext();
-  if (!ctx.allowed) return <ScopeDenied examCode={ctx.examCode} scope={ctx.scope} />;
-  if (!ctx.service.exists()) return <ExamNotCreated eyebrow="Examinations" title="Candidates" examCode={ctx.examCode} summaries={ctx.summaries} onSelect={ctx.selectExam} scope={ctx.scope} />;
-  return <StudentsView key={ctx.examCode} {...ctx} />;
+  return (
+    <AdminExamGate ctx={ctx} eyebrow="Examinations" title="Candidates" requireExam>
+      {(c) => <StudentsView key={c.exam.id} {...c} />}
+    </AdminExamGate>
+  );
 }

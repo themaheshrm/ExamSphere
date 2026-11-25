@@ -58,10 +58,23 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install psql
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-      - name: Replay migrations 001–012 and run supabase/tests
+      - name: Replay migrations 001–013 and run supabase/tests
         run: |
           bash supabase/tests/run_local.sh 2>&1 | tee db-tests.log
           grep -q "SUBJECT ADMIN SCOPE TEST COMPLETE" db-tests.log
           grep -q "TEMPORARY PASSWORD GATE TEST COMPLETE" db-tests.log
+          grep -q "ENGINE INTEGRATION TEST COMPLETE" db-tests.log
           if grep -q "FAIL" db-tests.log; then echo "Database test failure"; exit 1; fi
           echo "PASS assertions: $(grep -c PASS db-tests.log)"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The Postgres driver is only needed by the local Supabase stand-in.
+      - run: npm install --no-save pg@8.13.1
+      - name: Examination engine end-to-end (frontend API ↔ real migrations, RLS, RPCs)
+        env:
+          PGUSER: postgres
+          REQUIRE_DB: '1'
+        run: node --test tests/engine.integration.test.js

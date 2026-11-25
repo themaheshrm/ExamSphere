@@ -5,39 +5,30 @@ import Card from '../../components/common/Card';
 import PageHeader from '../../components/common/PageHeader';
 import StatusBadge from '../../components/common/StatusBadge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
-import { examRandomizerService } from '../../services/examRandomizerService';
-import { questionBankService } from '../../services/questionBankService';
 import { supabase } from '../../services/supabase';
+import { select } from '../../services/api/core';
+import { examsApi } from '../../services/api/examsApi';
 import { formatDateTime, formatRelative } from '../../utils/format';
 
-const STORE_LABELS = {
-  examsphere_randomized_exam_v1: 'Examination state & patterns',
-  examsphere_paper_attempts_v2: 'Attempt registry (paper snapshots)',
-  examsphere_student_attempts_v1: 'Candidate results',
-  examsphere_question_bank_v1: 'Question bank',
-  examsphere_candidate_roster_v1: 'Candidate roster',
-  examsphere_activity_log_v1: 'Activity log',
-  examsphere_platform_users_v1: 'Staff accounts',
-  examsphere_platform_settings_v1: 'Platform settings',
-};
-
-function readStorage() {
-  const rows = [];
-  let total = 0;
-  try {
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i);
-      const bytes = (localStorage.getItem(key) || '').length * 2;
-      total += bytes;
-      if (key.startsWith('examsphere_')) rows.push({ key, label: STORE_LABELS[key] || key, bytes });
+/** One round trip per data area, timed; failures are reported, not thrown. */
+async function probe() {
+  const timed = async (fn) => {
+    const t = performance.now();
+    try {
+      const value = await fn();
+      return { ok: true, ms: Math.round(performance.now() - t), value };
+    } catch (error) {
+      return { ok: false, ms: Math.round(performance.now() - t), error: error.message };
     }
-  } catch {
-    // storage blocked
-  }
-  return { rows: rows.sort((a, b) => b.bytes - a.bytes), total };
+  };
+  const [settings, exams, questions, active] = await Promise.all([
+    timed(() => select('platform_settings', 'id', (q) => q.limit(1))),
+    timed(() => examsApi.list()),
+    timed(() => select('questions', 'id', (q) => q.eq('is_archived', false))),
+    timed(() => select('admin_exam_candidates', 'attempt_id,started_at,exam_id', (q) => q.eq('attempt_status', 'active'))),
+  ]);
+  return { settings, exams, questions, active };
 }
-
-const kb = (bytes) => `${(bytes / 1024).toFixed(1)} KB`;
 
 /** Health of the services this deployment actually depends on. */
 export default function MonitoringPage() {
@@ -65,19 +56,27 @@ export default function MonitoringPage() {
     return () => { cancelled = true; };
   }, [checkedAt]);
 
-  const exam = examRandomizerService.getExamState();
-  const attempts = examRandomizerService.listAttempts();
-  const bankSize = questionBankService.getQuestions().length;
-  const storage = readStorage();
-  const active = attempts.filter((a) => a.status === 'active');
-  const oldestActive = active.reduce((min, a) => (!min || a.startedAt < min ? a.startedAt : min), null);
+  const [result, setResult] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    probe().then((r) => { if (!cancelled) setResult({ ...r, at: checkedAt }); });
+    return () => { cancelled = true; };
+  }, [checkedAt]);
+  const fresh = result?.at === checkedAt ? result : null;
+  const exams = fresh?.exams.ok ? fresh.exams.value : [];
+  const live = exams.filter((e) => e.status === 'published');
+  const intact = live.every((e) => e.patternCount === 10 && !e.patternsStale);
+  const bankSize = fresh?.questions.ok ? fresh.questions.value.length : 0;
+  const active = fresh?.active.ok ? fresh.active.value : [];
+  const oldestActive = active.reduce((min, a) => (!min || a.started_at < min ? a.started_at : min), null);
+  const pending = !fresh;
 
   const checks = [
     { label: 'Network connectivity', ok: online, detail: online ? 'Browser is online' : 'Browser reports offline', icon: Globe },
     { label: 'Authentication service', ok: authStatus.state === 'ok', pending: authStatus.state === 'checking', detail: authStatus.state === 'ok' ? `Session verified in ${authStatus.ms} ms` : authStatus.state === 'checking' ? 'Checking…' : 'Session could not be verified', icon: ShieldCheck },
-    { label: 'Pattern integrity', ok: Boolean(exam.verificationReport?.isValid), detail: `Verified ${formatRelative(exam.verificationReport?.timestamp) || '—'}`, icon: CheckCircle2 },
-    { label: 'Question bank', ok: bankSize >= 25, detail: `${bankSize} questions available (25 required)`, icon: Database },
-    { label: 'Attempt storage', ok: storage.rows.length > 0, detail: `${kb(storage.total)} used in this browser`, icon: HardDrive },
+    { label: 'Database', ok: Boolean(fresh?.settings.ok), pending, detail: pending ? 'Checking…' : fresh.settings.ok ? `Responded in ${fresh.settings.ms} ms` : fresh.settings.error, icon: HardDrive },
+    { label: 'Pattern integrity', ok: Boolean(fresh?.exams.ok) && intact, pending, detail: pending ? 'Checking…' : `${live.length} published examination(s)${intact ? ', all with 10 verified patterns' : ', patterns need regeneration'}`, icon: CheckCircle2 },
+    { label: 'Question bank', ok: bankSize >= 25, pending, detail: pending ? 'Checking…' : `${bankSize} active questions`, icon: Database },
   ];
   const healthy = checks.every((c) => c.ok || c.pending);
 
@@ -113,14 +112,13 @@ export default function MonitoringPage() {
       </section>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card title="Examination workload" subtitle={`${exam.meta.courseCode} · ${exam.isPublished ? 'published' : 'draft'}`}>
+        <Card title="Examination workload">
           <dl className="divide-y divide-slate-100 text-xs">
             {[
-              ['Attempts in progress', active.length],
+              ['Attempts in progress', pending ? '—' : active.length],
               ['Oldest running attempt', oldestActive ? `Started ${formatRelative(oldestActive)}` : '—'],
-              ['Answer sheets submitted', attempts.filter((a) => a.status === 'submitted').length],
-              ['Patterns generated', `${Object.keys(exam.patterns || {}).length} (last ${formatRelative(exam.lastGeneratedAt) || '—'})`],
-              ['Configured duration', `${exam.meta.durationMinutes} minutes`],
+              ['Answer sheets submitted', pending ? '—' : exams.reduce((n, e) => n + e.submittedAttempts, 0)],
+              ['Published examinations', pending ? '—' : live.length],
             ].map(([k, v]) => (
               <div key={k} className="flex justify-between gap-4 py-2.5">
                 <dt className="text-slate-500">{k}</dt>
@@ -130,19 +128,21 @@ export default function MonitoringPage() {
           </dl>
         </Card>
 
-        <Card title="Client data stores" bodyClassName="p-0" action={<Timer className="h-4 w-4 text-slate-400" aria-hidden="true" />}>
+        <Card title="Examinations" bodyClassName="p-0" action={<Timer className="h-4 w-4 text-slate-400" aria-hidden="true" />}>
           <Table className="rounded-none border-0">
             <TableHeader>
               <TableRow>
-                <TableHead>Store</TableHead>
-                <TableHead align="right">Size</TableHead>
+                <TableHead>Examination</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead align="right">Running / submitted</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {storage.rows.map((r) => (
-                <TableRow key={r.key}>
-                  <TableCell>{r.label}<span className="block font-mono text-[10px] text-slate-400">{r.key}</span></TableCell>
-                  <TableCell align="right" className="tabular-nums">{kb(r.bytes)}</TableCell>
+              {exams.map((e) => (
+                <TableRow key={e.id}>
+                  <TableCell><span className="font-mono text-xs font-semibold text-[#1E3A5F]">{e.courseCode}</span><span className="block text-[11px] text-slate-500">{e.title}</span></TableCell>
+                  <TableCell><StatusBadge status={e.isPublished ? 'Published' : e.status === 'closed' ? 'Closed' : 'Draft'} size="sm" /></TableCell>
+                  <TableCell align="right" className="tabular-nums">{e.activeAttempts} / {e.submittedAttempts}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

@@ -6,25 +6,20 @@ import Card from '../../components/common/Card';
 import PageHeader from '../../components/common/PageHeader';
 import EmptyState from '../../components/common/EmptyState';
 import Tabs from '../../components/common/Tabs';
-import { notificationService } from '../../services/notificationService';
-import { useAuth } from '../../context/AuthContext';
-import { useDataVersion } from '../../utils/useDataVersion';
+import { useNotifications } from '../../utils/useNotifications';
 import { formatDateTime } from '../../utils/format';
 
 const TONE_BAR = { info: 'bg-[#1E3A5F]', success: 'bg-emerald-600', warning: 'bg-amber-500', danger: 'bg-rose-600', neutral: 'bg-slate-300' };
 
 /** Full notification list for the signed-in staff member. */
 export default function NotificationsPage() {
-  const { user } = useAuth();
   const navigate = useNavigate();
-  useDataVersion();
   const [filter, setFilter] = useState('all');
-  const items = notificationService.list(user);
-  const unread = items.filter((n) => !n.read);
+  const { items, unread, markRead, loading } = useNotifications();
   const shown = filter === 'unread' ? unread : items;
 
   const open = (n) => {
-    notificationService.markRead(user, [n.id]);
+    markRead([n.id]);
     if (n.link) navigate(n.link);
   };
 
@@ -33,14 +28,14 @@ export default function NotificationsPage() {
       <PageHeader
         eyebrow="Account"
         title="Notifications"
-        actions={<Button variant="secondary" icon={CheckCheck} disabled={!unread.length} onClick={() => notificationService.markRead(user, items.map((n) => n.id))}>Mark all as read</Button>}
+        actions={<Button variant="secondary" icon={CheckCheck} disabled={!unread.length} onClick={() => markRead(items.map((n) => n.id))}>Mark all as read</Button>}
       />
       <Card bodyClassName="p-0">
         <div className="px-4">
           <Tabs tabs={[{ id: 'all', label: 'All', count: items.length }, { id: 'unread', label: 'Unread', count: unread.length }]} value={filter} onChange={setFilter} label="Notification filter" />
         </div>
         {shown.length === 0 ? (
-          <EmptyState icon={Bell} title={filter === 'unread' ? 'No unread notifications' : 'No notifications'} />
+          <EmptyState icon={Bell} title={loading && !items.length ? 'Loading…' : filter === 'unread' ? 'No unread notifications' : 'No notifications'} />
         ) : (
           <ul className="divide-y divide-slate-100">
             {shown.map((n) => (

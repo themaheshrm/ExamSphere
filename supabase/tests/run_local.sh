@@ -12,6 +12,11 @@ DB=${TEST_DB:-examsphere_test}
 P=(psql -U postgres -v ON_ERROR_STOP=1 -q)
 
 "${P[@]}" -d postgres -c "DROP DATABASE IF EXISTS $DB" -c "CREATE DATABASE $DB"
+# Leftover databases of the Node harness (tests/helpers/localSupabase.mjs) keep
+# the test roles alive; remove them so the roles can be recreated cleanly.
+for d in $("${P[@]}" -d postgres -Atc "SELECT datname FROM pg_database WHERE datname LIKE 'examsphere\_%' AND datname <> '$DB'"); do
+  "${P[@]}" -d postgres -c "DROP DATABASE IF EXISTS \"$d\" WITH (FORCE)"
+done
 for r in authenticator service_role authenticated anon; do
   "${P[@]}" -d postgres -c "DROP ROLE IF EXISTS $r" 2>/dev/null || true
 done
@@ -26,3 +31,4 @@ for f in migrations/00[5-9]_*.sql migrations/01[0-9]_*.sql; do "${P[@]}" -d "$DB
 psql -U authenticator -v ON_ERROR_STOP=1 -q -d "$DB" -f tests/110_api_session_immutability.sql 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE"
 "${P[@]}" -d "$DB" -f tests/120_subject_admin_scope_test.sql 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE"
 "${P[@]}" -d "$DB" -f tests/130_temporary_password_gate_test.sql 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE"
+"${P[@]}" -d "$DB" -f tests/140_engine_integration_test.sql 2>&1 | grep -E "PASS|FAIL|ERROR|COMPLETE"

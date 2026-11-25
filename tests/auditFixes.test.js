@@ -107,7 +107,7 @@ test('F2/F6: student dashboard, sidebar and exam screen use no sample student da
   }
   const dash = src('src/pages/student/StudentDashboard.jsx');
   assert.ok(!/Statement of marks|CGPA|SGPA|Attendance|Mentor|Invigilator/.test(dash), 'fake academic sections removed');
-  assert.match(dash, /studentRosterService\.find\(normalizedId\)/, 'department/semester/section from the roster');
+  assert.match(dash, /rosterApi\.list\(\)/, 'department/semester/section from the student\'s own database record');
 });
 
 // ── F3: session events ───────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ test('F4: /student/exam is guarded for students only, and the exam screen refuse
   const block = routes.slice(routes.lastIndexOf('<ProtectedRoute', routes.indexOf('path="/student/exam"')), routes.indexOf('path="/student/exam"'));
   assert.match(block, /allowedRoles=\{\[USER_ROLES\.STUDENT\]\}/);
   const exam = src('src/pages/student/ExamInterface.jsx');
-  assert.match(exam, /const studentIdentity = isStudentAccount \?/);
+  assert.match(exam, /const isStudentAccount = user\?\.role === USER_ROLES\.STUDENT;/);
   assert.match(exam, /Examinations can only be taken from a student account\./);
   assert.match(src('src/pages/student/StudentDashboard.jsx'), /Students only/);
 });

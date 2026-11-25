@@ -15,7 +15,8 @@ import { useToast } from '../../components/common/Toast';
 import { useAuth } from '../../context/AuthContext';
 import { adminManagementService } from '../../services/adminManagementService';
 import { activityLogService } from '../../services/activityLogService';
-import { getExamService } from '../../services/examRegistry';
+import { examsApi } from '../../services/api/examsApi';
+import { useAsync } from '../../utils/useAsync';
 import { formatDateTime, formatRelative } from '../../utils/format';
 
 const selectCls = 'es-select h-9 w-full rounded-sm border border-slate-300 bg-white pl-3 text-sm focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F] disabled:bg-slate-100';
@@ -46,18 +47,22 @@ function SubjectSelect({ id, subjects, value, onChange, selfAdminId }) {
 }
 
 function SubjectActivity({ admin }) {
-  if (admin.adminType !== 'subject' || !admin.subjectCode) return null;
-  const service = getExamService(admin.subjectCode);
-  const state = service?.getExamState();
-  const attempts = state ? service.listAttempts() : [];
-  const actions = activityLogService.list().filter((e) => e.actor?.identifier && e.actor.identifier === admin.adminId).slice(0, 5);
+  const subjectCode = admin.adminType === 'subject' ? admin.subjectCode : null;
+  const { data } = useAsync(async () => {
+    if (!subjectCode) return null;
+    const [exams, log] = await Promise.all([examsApi.list(), activityLogService.list({ limit: 200 })]);
+    return { exam: exams.find((e) => e.courseCode === subjectCode) || null, actions: log.filter((e) => e.userId === admin.id).slice(0, 5) };
+  }, [subjectCode, admin.id]);
+  if (!subjectCode) return null;
+  const state = data?.exam;
+  const actions = data?.actions || [];
   return (
     <section>
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Examination activity · {admin.subjectCode}</h3>
       <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 text-center text-xs">
-        {[['Examination', state ? (state.isPublished ? 'Published' : 'Draft') : 'Not created'],
-          ['In progress', attempts.filter((a) => a.status === 'active').length],
-          ['Submitted', attempts.filter((a) => a.status === 'submitted').length]].map(([k, v]) => (
+        {[['Examination', !data ? '…' : state ? (state.isPublished ? 'Published' : state.status === 'closed' ? 'Closed' : 'Draft') : 'Not created'],
+          ['In progress', state ? state.activeAttempts : 0],
+          ['Submitted', state ? state.submittedAttempts : 0]].map(([k, v]) => (
           <div key={k} className="bg-white p-2.5"><dt className="text-slate-500">{k}</dt><dd className="mt-0.5 font-semibold text-slate-900">{v}</dd></div>
         ))}
       </dl>

@@ -1,121 +1,85 @@
 import { readJson, writeJson, emitChange } from './localStore.js';
-import { examRandomizerService } from './examRandomizerService.js';
-import { studentRosterService } from './studentRosterService.js';
+import { select } from './api/core.js';
+import { examsApi } from './api/examsApi.js';
+import { studentExamApi } from './api/studentExamApi.js';
+import { questionsApi } from './api/questionsApi.js';
 import { activityLogService } from './activityLogService.js';
-import { platformService } from './platformService.js';
-import { assignPatternForCandidate } from '../utils/patternAssignment.js';
-import { notifications as studentCirculars } from '../data/studentMockData.js';
 import { getAdminScope } from './adminScope.js';
-import { getExamService } from './examRegistry.js';
-import { scopedQuestionBank } from './scopedQuestionBank.js';
 import { USER_ROLES } from '../utils/constants.js';
 
+// Which notifications a user has opened is a UI preference: browser storage is fine.
 const READ_KEY = 'examsphere_notifications_read_v1';
 const PREFS_KEY = 'examsphere_profile_prefs_v1';
+const userKey = (user) => user?.id || user?.identifier || 'anonymous';
 
-function userKey(user) {
-  return user?.id || user?.identifier || 'anonymous';
+async function announcements(link) {
+  const rows = await select('announcements', 'id,title,body,priority,issuer,published_at', (q) => q.order('published_at', { ascending: false }).limit(10)).catch(() => []);
+  return rows.map((a) => ({ id: `ann-${a.id}`, tone: a.priority === 'Urgent' ? 'danger' : 'neutral', title: a.title, message: a.body, at: a.published_at, link }));
 }
 
-function studentNotifications(user) {
-  const state = examRandomizerService.getExamState();
-  const identity = String(user?.usn || user?.identifier || '').trim().toUpperCase();
+async function studentNotifications(settings) {
   const items = [];
-  const settings = platformService.getSettings();
-
-  if (settings.maintenanceNotice) {
-    items.push({ id: `maint-${settings.maintenanceNotice.length}`, tone: 'warning', title: 'Platform notice', message: settings.maintenanceNotice, at: null, link: '/student' });
+  if (settings.maintenanceNotice) items.push({ id: `maint-${settings.maintenanceNotice.length}`, tone: 'warning', title: 'Platform notice', message: settings.maintenanceNotice, at: null, link: '/student' });
+  const exams = await studentExamApi.myExams();
+  for (const e of exams) {
+    if (e.availability === 'live' || e.availability === 'in_progress') {
+      items.push({
+        id: `open-${e.examId}`, tone: 'info', title: `${e.courseCode} examination is open`,
+        message: `${e.courseTitle}${e.patternLabel && settings.showPatternToCandidates ? ` (Pattern ${e.patternLabel})` : ''}. Closes ${new Date(e.windowEnd).toLocaleString('en-IN')}.`,
+        at: e.windowStart, link: '/student?tab=exams',
+      });
+    }
+    if (e.attemptStatus === 'submitted' || e.attemptStatus === 'auto_submitted') {
+      items.push({
+        id: `result-${e.attemptId}`, tone: 'success', title: e.score === null ? 'Submission recorded' : 'Result available',
+        message: e.score === null ? `Your ${e.courseCode} answer sheet was submitted. Results will be published by the examination office.` : `${e.courseCode}: ${e.score} / ${e.maxScore} (${e.percentage}%).`,
+        at: null, link: '/student?tab=results',
+      });
+    }
   }
-  if (identity && !studentRosterService.isEligible(identity)) {
-    items.push({ id: `withheld-${identity}`, tone: 'danger', title: 'Examination access withheld', message: 'Your eligibility for the current examination has been withheld. Contact the examination office.', at: null, link: '/student?tab=exams' });
-  } else if (state.isPublished) {
-    const pattern = assignPatternForCandidate(identity);
-    items.push({
-      id: `published-${state.meta.id}-${state.publishedAt}`,
-      tone: 'info',
-      title: `${state.meta.courseCode} examination is open`,
-      message: `${state.meta.courseTitle} is available${pattern && settings.showPatternToCandidates ? ` (assigned Pattern ${pattern})` : ''}. Read the instructions before you start.`,
-      at: state.publishedAt,
-      link: '/student?tab=exams',
-    });
-  }
-  const attempt = identity ? examRandomizerService.getStudentAttempt(identity) : null;
-  if (attempt) {
-    items.push({
-      id: `result-${attempt.attemptId}`,
-      tone: 'success',
-      title: settings.resultDisplay === 'withheld' ? 'Submission recorded' : 'Result available',
-      message: settings.resultDisplay === 'withheld'
-        ? `Your ${attempt.courseCode} answer sheet was submitted. Results will be published by the examination office.`
-        : `${attempt.courseCode}: ${attempt.score} / ${attempt.maxScore} (${attempt.percentage}%).`,
-      at: attempt.submittedAt,
-      link: '/student?tab=results',
-    });
-  }
-  studentCirculars.forEach((n) => items.push({ id: `circular-${n.id}`, tone: 'neutral', title: n.title, message: n.message, at: null, timeLabel: n.time, link: '/student?tab=notifications' }));
-  return items;
+  return [...items, ...(await announcements('/student?tab=notifications'))];
 }
 
-function adminNotifications(user) {
+async function adminNotifications(user, settings) {
   const prefs = { submissionAlerts: true, publicationAlerts: true, ...(readJson(PREFS_KEY, {})[userKey(user)] || {}) };
-  // Subject-scoped admins are notified about their own subject only.
   const scope = getAdminScope(user);
-  const service = scope.scoped ? getExamService(scope.subjectCodes[0]) : examRandomizerService;
-  const q = scope.scoped ? `?exam=${scope.subjectCodes[0]}` : '';
-  const state = service.getExamState();
+  const [exams, bank] = await Promise.all([examsApi.list(), questionsApi.list()]);
   const items = [];
-  const bankSize = scopedQuestionBank(scope).getQuestions().length;
-  if (!state) {
-    items.push({ id: `create-${scope.subjectCodes[0]}`, tone: 'info', title: `Create the ${scope.label} examination`, message: 'Select 25 questions to generate patterns A–J.', at: null, link: `/admin/exams${q}` });
-    return items;
+  if (settings.maintenanceNotice) items.push({ id: `maint-${settings.maintenanceNotice.length}`, tone: 'warning', title: 'Platform notice', message: settings.maintenanceNotice, at: null, link: '/admin' });
+  for (const code of scope.subjectCodes.filter((c) => scope.scoped && !exams.some((e) => e.courseCode === c))) {
+    items.push({ id: `create-${code}`, tone: 'info', title: `Create the ${scope.label} examination`, message: 'Select 25 questions to generate patterns A–J.', at: null, link: `/admin/exams?exam=${code}` });
   }
-  const attempts = service.listAttempts();
-  const active = attempts.filter((a) => a.status === 'active');
-  const submitted = attempts.filter((a) => a.status === 'submitted');
-  const withheld = studentRosterService.list().filter((s) => s.status === 'Withheld');
+  for (const e of exams) {
+    const q = `?exam=${e.courseCode}`;
+    if (e.status === 'draft' && prefs.publicationAlerts) items.push({ id: `draft-${e.id}-${e.patternsGeneratedAt}`, tone: 'warning', title: `${e.courseCode} is in draft`, message: 'Candidates cannot start the examination until it is published.', at: e.createdAt, link: `/admin/exams${q}` });
+    if (e.status === 'draft' && (e.patternsStale || e.patternCount !== 10)) items.push({ id: `patterns-${e.id}-${e.questionCount}`, tone: 'danger', title: `${e.courseCode}: patterns not generated`, message: 'Generate the 10 patterns before publishing.', at: null, link: `/admin/exams${q}` });
+    if (e.activeAttempts) items.push({ id: `active-${e.id}-${e.activeAttempts}`, tone: 'info', title: `${e.activeAttempts} attempt${e.activeAttempts === 1 ? '' : 's'} in progress · ${e.courseCode}`, message: 'Candidates are currently writing the examination.', at: null, link: `/admin/results${q}` });
+  }
+  if (bank.length < 25) items.push({ id: `bank-${bank.length}`, tone: 'warning', title: 'Question bank below 25 questions', message: `Only ${bank.length} questions are available; an examination needs 25.`, at: null, link: '/admin/questions' });
+  if (prefs.submissionAlerts) {
+    const recent = await examsApi.recentSubmissions(exams.map((e) => e.id), 5);
+    recent.forEach((a) => items.push({ id: `sub-${a.attemptId}`, tone: 'success', title: `Answer sheet submitted · ${a.usn}`, message: `${a.paperCode}: ${a.score ?? '—'} / ${a.maxScore ?? '—'}`, at: a.submittedAt, link: `/admin/results?exam=${exams.find((e) => e.id === a.examId)?.courseCode || ''}` }));
+  }
+  return [...items, ...(await announcements('/admin/notifications'))];
+}
 
-  if (!state.isPublished && prefs.publicationAlerts) {
-    items.push({ id: `draft-${state.lastGeneratedAt}`, tone: 'warning', title: `${state.meta.courseCode} is in draft`, message: 'Candidates cannot start the examination until it is published.', at: state.lastGeneratedAt, link: `/admin/exams${q}` });
-  }
-  if (state.verificationReport && !state.verificationReport.isValid) {
-    items.push({ id: `verify-${state.lastGeneratedAt}`, tone: 'danger', title: 'Pattern verification failed', message: 'Regenerate the 10 patterns before publishing.', at: state.lastGeneratedAt, link: `/admin/exams${q}` });
-  }
-  if (bankSize < 25) {
-    items.push({ id: `bank-${bankSize}`, tone: 'warning', title: 'Question bank below 25 questions', message: `Only ${bankSize} questions are available; an examination needs 25.`, at: null, link: `/admin/questions${q}` });
-  }
-  if (active.length) {
-    items.push({ id: `active-${active.length}-${active[0].attemptId}`, tone: 'info', title: `${active.length} attempt${active.length === 1 ? '' : 's'} in progress`, message: 'Candidates are currently writing the examination.', at: active[0].startedAt, link: `/admin/results${q}` });
-  }
-  if (prefs.submissionAlerts) submitted.slice(0, 5).forEach((a) => items.push({ id: `sub-${a.attemptId}`, tone: 'success', title: `Answer sheet submitted · ${a.studentIdentifier}`, message: `${a.paperCode}: ${a.result?.score ?? '—'} / ${a.result?.maxScore ?? '—'}`, at: a.submittedAt, link: `/admin/results${q}` }));
-  if (withheld.length && !scope.scoped) {
-    items.push({ id: `withheld-${withheld.length}`, tone: 'neutral', title: `${withheld.length} candidate${withheld.length === 1 ? '' : 's'} withheld`, message: 'Withheld candidates cannot start the examination.', at: null, link: '/admin/students' });
-  }
+async function superAdminNotifications(settings) {
+  const items = [];
+  if (settings.maintenanceNotice) items.push({ id: `maint-${settings.maintenanceNotice.length}`, tone: 'warning', title: 'Maintenance notice is live', message: settings.maintenanceNotice, at: null, link: '/super-admin/settings' });
+  const log = await activityLogService.list({ limit: 8 });
+  log.forEach((e) => items.push({ id: `log-${e.id}`, tone: e.severity === 'warning' ? 'warning' : 'neutral', title: e.action, message: `${e.actor.name}${e.target ? ` · ${e.target}` : ''}`, at: e.at, link: '/super-admin/activity' }));
   return items;
 }
 
-function superAdminNotifications() {
-  const items = [];
-  const settings = platformService.getSettings();
-  if (settings.maintenanceNotice) {
-    items.push({ id: `maint-${settings.maintenanceNotice.length}`, tone: 'warning', title: 'Maintenance notice is live', message: settings.maintenanceNotice, at: null, link: '/super-admin/settings' });
-  }
-  activityLogService.list().slice(0, 8).forEach((e) => items.push({ id: `log-${e.id}`, tone: e.severity === 'warning' ? 'warning' : 'neutral', title: e.action, message: `${e.actor.name}${e.target ? ` · ${e.target}` : ''}`, at: e.at, link: '/super-admin/activity' }));
-  return items;
-}
-
-/** Role-aware notifications derived from live application state. */
+/** Role-aware notifications derived from live Supabase data. */
 export const notificationService = {
-  list(user) {
+  async load(user, settings) {
     if (!user) return [];
-    const raw = user.role === USER_ROLES.STUDENT ? studentNotifications(user)
-      : user.role === USER_ROLES.SUPER_ADMIN ? superAdminNotifications()
-        : adminNotifications(user);
+    const raw = user.role === USER_ROLES.STUDENT ? await studentNotifications(settings)
+      : user.role === USER_ROLES.SUPER_ADMIN ? await superAdminNotifications(settings)
+        : await adminNotifications(user, settings);
     const read = new Set(readJson(READ_KEY, {})[userKey(user)] || []);
     return raw.map((n) => ({ ...n, read: read.has(n.id) }));
-  },
-
-  unreadCount(user) {
-    return this.list(user).filter((n) => !n.read).length;
   },
 
   markRead(user, ids) {

@@ -3,7 +3,7 @@
  * Row format: [topic, difficulty, statement, [A, B, C, D], correctIndex].
  * Every subject has its own bank; no question is shared between subjects.
  */
-import { SUBJECTS } from './subjectCatalog.js';
+import { SUBJECTS } from '../../../src/data/subjectCatalog.js';
 
 const BANKS = {
   '22CS302': [

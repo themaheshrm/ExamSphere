@@ -7,7 +7,12 @@
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 
-export function startMockSupabase({ tables, users = [], signupTrigger = true, port = 0, host = '127.0.0.1', serviceKey = null, functions = {} }) {
+/**
+ * Options for a real-database run (tests/helpers/localSupabase.mjs):
+ *   rest  – PostgREST handler (pgRest.mjs) that serves /rest/v1 from PostgreSQL
+ *   hooks – { created(user), updated(user), deleted(user) } mirror Auth users into auth.users
+ */
+export function startMockSupabase({ tables = {}, users = [], signupTrigger = true, port = 0, host = '127.0.0.1', serviceKey = null, functions = {}, rest = null, hooks = {} }) {
   const state = { tables: structuredClone(tables), users: structuredClone(users), writes: [], requests: [], sessions: new Map(), refresh: new Map(), refreshAmr: new Map(), recoveryEmails: [] };
   const CORS = {
     'access-control-allow-origin': '*',
@@ -127,6 +132,11 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
         if (state.users.some((u) => u.email === body.email)) return send(res, 422, { code: 'email_exists', msg: 'A user with this email address has already been registered' });
         const user = { id: randomUUID(), email: body.email, app_metadata: body.app_metadata || {}, user_metadata: body.user_metadata || {}, password: body.password, ...(body.ban_duration ? { banned_until: banUntil(body.ban_duration) } : {}) };
         state.users.push(user);
+        if (hooks.created) {
+          Promise.resolve(hooks.created(user)).then(() => send(res, 200, publicUser(user)))
+            .catch((e) => { state.users = state.users.filter((u) => u.id !== user.id); send(res, 500, { msg: `mock: ${e.message}` }); });
+          return;
+        }
         if (signupTrigger) triggerProfile(user);
         return send(res, 200, publicUser(user));
       }
@@ -138,17 +148,35 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
         if (req.method === 'PUT') {
           Object.assign(user, { app_metadata: body.app_metadata ?? user.app_metadata, password: body.password ?? user.password, rotated: true });
           if (body.ban_duration !== undefined) user.banned_until = banUntil(body.ban_duration);
+          if (hooks.updated) { Promise.resolve(hooks.updated(user)).then(() => send(res, 200, publicUser(user))).catch((e) => send(res, 500, { msg: e.message })); return; }
           return send(res, 200, publicUser(user));
         }
         if (req.method === 'DELETE') {
           state.users = state.users.filter((u) => u.id !== user.id);
           if (state.tables.profiles) state.tables.profiles.rows = state.tables.profiles.rows.filter((r) => r.id !== user.id);
           if (state.tables.subject_admins) state.tables.subject_admins.rows = state.tables.subject_admins.rows.filter((r) => r.admin_id !== user.id);
+          if (hooks.deleted) { Promise.resolve(hooks.deleted(user)).then(() => send(res, 200, {})).catch((e) => send(res, 500, { msg: e.message })); return; }
           return send(res, 200, {});
         }
       }
 
       // ── PostgREST ──
+      if (rest && url.pathname.startsWith('/rest/v1/')) {
+        const tok = bearer(req);
+        const sessionUser = state.users.find((u) => u.id === state.sessions.get(tok));
+        let role = 'anon';
+        let claims = { role: 'anon' };
+        if (serviceKey && tok === serviceKey) { role = 'service_role'; claims = { role: 'service_role' }; }
+        else if (sessionUser) {
+          role = 'authenticated';
+          try { claims = JSON.parse(Buffer.from(tok.split('.')[1], 'base64url')); } catch { claims = { sub: sessionUser.id, role: 'authenticated' }; }
+        }
+        rest.handle({ method: req.method, url, body, headers: req.headers, role, claims }).then((out) => {
+          res.writeHead(out.status, { 'content-type': 'application/json', ...CORS, ...(out.headers || {}) });
+          res.end(out.body === undefined ? '' : JSON.stringify(out.body));
+        }).catch((e) => send(res, 500, { message: `mock rest: ${e.message}` }));
+        return;
+      }
       const t = url.pathname.match(/^\/rest\/v1\/([a-z_]+)$/);
       if (!t) return send(res, 404, { message: `mock: unhandled ${req.method} ${url.pathname}` });
       const name = t[1];

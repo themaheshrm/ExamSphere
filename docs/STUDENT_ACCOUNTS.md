@@ -37,7 +37,7 @@ Admin (browser, signed in)
 | Role, Student ID, name, must-change flag, department/semester/section/mobile | Auth `app_metadata` (writable only with the service role) |
 | Profile | `profiles` (`role = student`, `usn`, `full_name`; `email`, `institution_id`, `department_id` if the columns exist) |
 | Semester, section, phone | `student_details` if migration 005 is applied |
-| Exam eligibility roster (current browser-local exam engine) | the admin's browser roster, without any password |
+| Exam eligibility | `exam_assignments`: a new student is assigned to the examination being managed on the Candidates page |
 
 ## Deploying (one-time; needs your approval and the Supabase CLI)
 

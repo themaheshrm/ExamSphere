@@ -15,11 +15,12 @@ import EmptyState from '../../components/common/EmptyState';
 import StatusBadge from '../../components/common/StatusBadge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
 import { useToast } from '../../components/common/Toast';
-import { DIFFICULTIES, validateQuestion } from '../../services/questionBankService.js';
-import { scopedQuestionBank } from '../../services/scopedQuestionBank.js';
+import { DIFFICULTIES, validateQuestion } from '../../utils/questionValidation.js';
 import { getAdminScope, DEFAULT_EXAM_CODE } from '../../services/adminScope.js';
-import { getScopedExamService, defaultSubjectMeta } from '../../services/examRegistry.js';
-import { subjectByCode, subjectForQuestion } from '../../data/subjectCatalog.js';
+import { questionsApi } from '../../services/api/questionsApi.js';
+import { examsApi } from '../../services/api/examsApi.js';
+import { useAsync, emitDataChanged } from '../../utils/useAsync.js';
+import { useSettings } from '../../context/SettingsContext.jsx';
 import { activityLogService } from '../../services/activityLogService.js';
 import { downloadQuestionTemplate, readQuestionImportFile, QUESTION_IMPORT_HEADERS } from '../../utils/questionImport.js';
 import { usePagination } from '../../utils/usePagination';
@@ -38,9 +39,16 @@ export default function QuestionBankPage() {
   const { notify } = useToast();
   const fileRef = useRef(null);
   const scope = getAdminScope(user);
-  const bank = scopedQuestionBank(scope);
-  const scopedSubject = scope.scoped ? subjectByCode(scope.subjectCodes[0]) : null;
-  const [questions, setQuestions] = useState(() => bank.getQuestions());
+  const { settings } = useSettings();
+  // RLS limits both lists to the admin's institution (and subject, if scoped).
+  const { data, error: loadError, loading, reload } = useAsync(async () => {
+    const [list, subjectRows] = await Promise.all([questionsApi.list(), questionsApi.listSubjects()]);
+    return { list, subjectRows };
+  }, [user?.id]);
+  const questions = useMemo(() => data?.list || [], [data]);
+  const subjectRows = useMemo(() => data?.subjectRows || [], [data]);
+  const scopedSubject = scope.scoped ? subjectRows.find((x) => x.code === scope.subjectCodes[0]) || null : null;
+  const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
   const [topicFilter, setTopicFilter] = useState('');
@@ -58,7 +66,7 @@ export default function QuestionBankPage() {
   const [isReading, setIsReading] = useState(false);
   const [confirmSend, setConfirmSend] = useState(false);
 
-  const subjects = useMemo(() => [...new Set(questions.map((item) => item.subject))].sort(), [questions]);
+  const subjects = useMemo(() => [...new Set([...subjectRows.map((x) => x.title), ...questions.map((item) => item.subject)])].sort(), [questions, subjectRows]);
   const topics = useMemo(() => [...new Set(
     questions.filter((item) => !subjectFilter || item.subject === subjectFilter).map((item) => item.topic),
   )].sort(), [questions, subjectFilter]);
@@ -83,7 +91,7 @@ export default function QuestionBankPage() {
   const importSummary = useMemo(() => ['Ready', 'Duplicate', 'Invalid', 'Imported']
     .map((status) => [status, importRows.filter((row) => row.status === status).length]), [importRows]);
 
-  const refreshQuestions = () => setQuestions(bank.getQuestions());
+  const refreshQuestions = () => { reload(); emitDataChanged(); };
   const log = (action, target, details) => activityLogService.log({ action, category: 'question-bank', actor: user, target, details });
 
   const openCreate = () => {
@@ -109,37 +117,46 @@ export default function QuestionBankPage() {
     setQuestionModal(true);
   };
 
-  const submitQuestion = (event) => {
+  const submitQuestion = async (event) => {
     event.preventDefault();
     const { errors } = validateQuestion(form);
     if (errors.length) {
       setFormErrors(errors);
       return;
     }
+    setBusy(true);
     try {
-      const saved = bank.saveQuestion(form, editingQuestion?.id ?? null);
+      const saved = await questionsApi.save(form, editingQuestion?.id ?? null);
       refreshQuestions();
       setQuestionModal(false);
-      log(editingQuestion ? 'Edited question' : 'Added question', `Q${saved.id}`, saved.statement.slice(0, 80));
-      notify(editingQuestion ? `Question ${saved.id} updated.` : `Question ${saved.id} added to the bank.`);
-    } catch (error) {
-      setFormErrors([error.message]);
+      log(editingQuestion ? 'Edited question' : 'Added question', `Q${saved.questionNo}`, saved.statement.slice(0, 80));
+      notify(editingQuestion ? `Question ${saved.questionNo} updated.` : `Question ${saved.questionNo} added to the bank.`);
+    } catch (err) {
+      setFormErrors([err.message]);
+    } finally {
+      setBusy(false);
     }
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deleteTarget) return;
+    setBusy(true);
+    let outcome;
     try {
-      bank.deleteQuestion(deleteTarget.id);
-    } catch (error) {
-      notify(error.message, 'error');
+      outcome = await questionsApi.remove(deleteTarget.id);
+    } catch (err) {
+      notify(err.message, 'error');
       setDeleteTarget(null);
+      setBusy(false);
       return;
     }
+    setBusy(false);
     setSelectedIds((current) => current.filter((id) => id !== deleteTarget.id));
     refreshQuestions();
-    log('Deleted question', `Q${deleteTarget.id}`, deleteTarget.statement.slice(0, 80));
-    notify(`Question ${deleteTarget.id} deleted.`);
+    log(outcome === 'archived' ? 'Archived question' : 'Deleted question', `Q${deleteTarget.questionNo}`, deleteTarget.statement.slice(0, 80));
+    notify(outcome === 'archived'
+      ? `Question ${deleteTarget.questionNo} is used in an examination, so it was archived (hidden from the bank).`
+      : `Question ${deleteTarget.questionNo} deleted.`);
     setDeleteTarget(null);
   };
 
@@ -154,40 +171,48 @@ export default function QuestionBankPage() {
     });
   };
 
-  const sendQuestionsToGenerator = () => {
+  const sendQuestionsToGenerator = async () => {
     if (selectedIds.length !== 25) return;
-    const selectedQuestions = selectedIds.map((id) => questions.find((item) => item.id === id));
-    // Target exam: the single catalogue subject of all 25 questions; otherwise
+    const selectedQuestions = selectedIds.map((id) => questions.find((item) => item.id === id)).filter(Boolean);
+    // Target exam: the single subject of all 25 questions; otherwise
     // (institution-wide admins only) the original 22CS601 examination.
-    const codes = [...new Set(selectedQuestions.map((q) => subjectForQuestion(q.subject)?.code || null))];
+    const codes = [...new Set(selectedQuestions.map((q) => q.subjectCode || null))];
     const target = codes.length === 1 && codes[0] ? codes[0] : (!scope.scoped ? DEFAULT_EXAM_CODE : null);
-    if (!target) {
+    if (!target || selectedQuestions.length !== 25) {
       setConfirmSend(false);
       notify('All 25 questions must belong to your assigned subject.', 'error');
       return;
     }
+    setBusy(true);
     try {
-      const service = getScopedExamService(scope, target);
-      const masters = selectedQuestions.map((question) => ({
-        id: Number(question.id),
-        text: question.statement,
-        options: [...question.options],
-        correctOption: Number(question.correctOption),
-        subject: question.subject,
-        topic: question.topic,
-        difficulty: question.difficulty,
-        marks: Number(question.marks),
-        negativeMarks: Number(question.negativeMarks),
-      }));
-      if (service.exists()) service.setMasterQuestions(masters);
-      else service.createExam(defaultSubjectMeta(target), masters);
+      const current = examsApi.currentBySubject(await examsApi.list())[target];
+      let examId = current?.id;
+      if (current && current.status !== 'draft') {
+        throw new Error(`${target} is ${current.status}. Unpublish it (possible until an attempt starts) before changing its questions.`);
+      }
+      if (!examId) {
+        const subject = subjectRows.find((x) => x.code === target);
+        if (!subject) throw new Error(`Subject ${target} is not available.`);
+        examId = await examsApi.create({
+          subject, title: subject.title, examDate: '', durationMinutes: 45,
+          semesterLabel: subject.semester ? `Semester ${subject.semester}` : '',
+          instructions: ['25 multiple-choice questions. Marks are shown with each question.', 'Select one option per question.', 'Once submitted, answers cannot be changed.'],
+          resultDisplay: settings.resultDisplay,
+        });
+      }
+      await examsApi.setQuestions(examId, selectedQuestions.map((q) => q.id));
+      const report = await examsApi.generatePatterns(examId);
+      if (report?.isValid === false) throw new Error('Patterns were generated but failed verification. Regenerate them on the examination page.');
       log('Replaced examination question set', target, '25 questions · patterns A–J regenerated');
-      notify('The 25 questions were sent to the generator and patterns A–J were regenerated. Active attempts keep their saved paper.');
+      notify('The 25 questions were sent to the generator and patterns A–J were regenerated.');
       setConfirmSend(false);
+      emitDataChanged();
       navigate(`/admin/exams?exam=${target}`);
-    } catch (error) {
+    } catch (err) {
       setConfirmSend(false);
-      notify(error.message || 'Could not update the exam generator.', 'error');
+      notify(err.message || 'Could not update the exam generator.', 'error');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -208,7 +233,12 @@ export default function QuestionBankPage() {
     setIsReading(true);
     try {
       const preview = await readQuestionImportFile(file, questions);
-      setImportRows(bank.applyScopeToPreview(preview.rows));
+      // Subjects outside the admin's scope (or unknown) are flagged before import;
+      // import_questions enforces the same rule on the server.
+      const known = new Set(subjectRows.flatMap((x) => [x.title.toLowerCase(), x.code.toLowerCase()]));
+      setImportRows(preview.rows.map((row) => (row.status !== 'Invalid' && !known.has(String(row.question.subject).trim().toLowerCase())
+        ? { ...row, status: 'Invalid', errors: [...row.errors, scope.scoped ? 'Subject is outside your assigned subject.' : 'Unknown subject.'] }
+        : row)));
       setImportErrors(preview.errors);
       if (!preview.rows.length && !preview.errors.length) {
         setImportErrors(['No question rows were found in the selected file.']);
@@ -220,18 +250,23 @@ export default function QuestionBankPage() {
     }
   };
 
-  const confirmImport = () => {
+  const confirmImport = async () => {
+    setBusy(true);
     try {
-      const imported = bank.importQuestions(readyImportRows.map((row) => row.question));
+      const ready = readyImportRows;
+      const result = await questionsApi.import(importFileName, ready.map((row) => ({ ...row.question, rowNumber: row.rowNumber })));
+      const rejected = Object.fromEntries((result.rejections || []).map((r) => [Number(r.rowNumber), r.errors || []]));
       refreshQuestions();
-      setImportRows((current) => current.map((row) => row.status === 'Ready'
-        ? { ...row, status: 'Imported' }
-        : row));
-      log('Imported questions', importFileName, `${imported.length} question(s)`);
-      notify(`Imported ${imported.length} question${imported.length === 1 ? '' : 's'}.`);
-      if (!imported.length) setImportModal(false);
-    } catch (error) {
-      setImportErrors([error.message]);
+      setImportRows((current) => current.map((row) => {
+        if (row.status !== 'Ready') return row;
+        return rejected[row.rowNumber] ? { ...row, status: 'Invalid', errors: rejected[row.rowNumber] } : { ...row, status: 'Imported' };
+      }));
+      log('Imported questions', importFileName, `${result.imported} question(s)`);
+      notify(`Imported ${result.imported} question${result.imported === 1 ? '' : 's'}${result.rejected ? `; ${result.rejected} rejected by the server` : ''}.`, result.rejected ? 'warning' : 'success');
+    } catch (err) {
+      setImportErrors([err.message]);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -262,6 +297,13 @@ export default function QuestionBankPage() {
           </>
         )}
       />
+
+      {loadError && (
+        <Alert tone="danger" title="Could not load the question bank">
+          {loadError.message} <button type="button" className="ml-2 font-semibold underline" onClick={reload}>Try again</button>
+        </Alert>
+      )}
+      {loading && !data && <p className="text-sm text-slate-500" role="status">Loading question bank…</p>}
 
       <section className="grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-slate-200 bg-slate-200 max-lg:[&>*:last-child]:col-span-2 lg:grid-cols-5" aria-label="Question bank summary">
         <div className="bg-white p-4">
@@ -341,16 +383,16 @@ export default function QuestionBankPage() {
                       <TableCell>
                         <input
                           type="checkbox"
-                          aria-label={`Select question ${question.id} for the examination`}
+                          aria-label={`Select question ${question.questionNo} for the examination`}
                           checked={selected}
                           onChange={() => toggleSelected(question.id)}
                           className="h-4 w-4 rounded-sm border-slate-300 accent-[#1E3A5F]"
                         />
                       </TableCell>
-                      <TableCell className="hidden font-mono text-slate-500 sm:table-cell">{question.id}</TableCell>
+                      <TableCell className="hidden font-mono text-slate-500 sm:table-cell">{question.questionNo}</TableCell>
                       <TableCell className="max-w-xl">
                         <p className="text-[13px] font-medium leading-snug text-slate-900">{question.statement}</p>
-                        <p className="mt-1 flex items-center gap-2 text-[11px] text-slate-500 sm:hidden"><span className="font-mono">ID {question.id}</span><StatusBadge status={question.difficulty} dot={false} size="sm" /><span>{question.marks} marks</span></p>
+                        <p className="mt-1 flex items-center gap-2 text-[11px] text-slate-500 sm:hidden"><span className="font-mono">ID {question.questionNo}</span><StatusBadge status={question.difficulty} dot={false} size="sm" /><span>{question.marks} marks</span></p>
                         <ol className="mt-1.5 grid gap-x-4 gap-y-0.5 text-[11px] text-slate-500 sm:grid-cols-2">
                           {question.options.map((option, index) => (
                             <li key={index} className="truncate">
@@ -369,8 +411,8 @@ export default function QuestionBankPage() {
                       </TableCell>
                       <TableCell align="right">
                         <div className="flex justify-end gap-1">
-                          <button type="button" aria-label={`Edit question ${question.id}`} onClick={() => openEdit(question)} className="rounded-sm p-2 text-slate-500 hover:bg-slate-100 hover:text-[#1E3A5F]"><Edit3 className="h-4 w-4" /></button>
-                          <button type="button" aria-label={`Delete question ${question.id}`} onClick={() => setDeleteTarget(question)} className="rounded-sm p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700"><Trash2 className="h-4 w-4" /></button>
+                          <button type="button" aria-label={`Edit question ${question.questionNo}`} onClick={() => openEdit(question)} className="rounded-sm p-2 text-slate-500 hover:bg-slate-100 hover:text-[#1E3A5F]"><Edit3 className="h-4 w-4" /></button>
+                          <button type="button" aria-label={`Delete question ${question.questionNo}`} onClick={() => setDeleteTarget(question)} className="rounded-sm p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700"><Trash2 className="h-4 w-4" /></button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -406,12 +448,12 @@ export default function QuestionBankPage() {
       <Modal
         isOpen={questionModal}
         onClose={() => setQuestionModal(false)}
-        title={editingQuestion ? `Edit question ${editingQuestion.id}` : 'Add question'}
+        title={editingQuestion ? `Edit question ${editingQuestion.questionNo}` : 'Add question'}
         maxWidth="max-w-3xl"
         footer={(
           <>
             <Button variant="secondary" onClick={() => setQuestionModal(false)}>Cancel</Button>
-            <Button type="submit" form="question-form" icon={Check}>{editingQuestion ? 'Save changes' : 'Add question'}</Button>
+            <Button type="submit" form="question-form" icon={Check} isLoading={busy}>{editingQuestion ? 'Save changes' : 'Add question'}</Button>
           </>
         )}
       >
@@ -477,10 +519,11 @@ export default function QuestionBankPage() {
         isOpen={Boolean(deleteTarget)}
         onClose={() => setDeleteTarget(null)}
         onConfirm={confirmDelete}
+        isLoading={busy}
         tone="danger"
         title="Delete question?"
         confirmLabel="Delete question"
-        description="The question is removed permanently. Generated examinations keep their copy."
+        description="Removed from the bank. A question already used in an examination is archived instead, so its papers and results stay intact."
       >
         {deleteTarget && <p className="rounded-sm border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800">{deleteTarget.statement}</p>}
       </ConfirmDialog>
@@ -489,10 +532,11 @@ export default function QuestionBankPage() {
         isOpen={confirmSend}
         onClose={() => setConfirmSend(false)}
         onConfirm={sendQuestionsToGenerator}
+        isLoading={busy}
         tone="warning"
         title="Replace the examination question set?"
         confirmLabel="Replace and regenerate"
-        description="These 25 questions become the master set and patterns A–J are regenerated. Attempts in progress keep their paper."
+        description="These 25 questions become the master set of the subject's draft examination and patterns A–J are regenerated on the server."
       />
 
       <Modal
@@ -504,7 +548,7 @@ export default function QuestionBankPage() {
           <>
             <Button variant="secondary" onClick={() => setImportModal(false)}>Close</Button>
             {importRows.length > 0 && <Button variant="secondary" onClick={() => { setImportRows([]); setImportErrors([]); setImportFileName(''); }}>Choose another file</Button>}
-            <Button icon={Check} disabled={!readyImportRows.length} onClick={confirmImport}>Import {readyImportRows.length} valid question{readyImportRows.length === 1 ? '' : 's'}</Button>
+            <Button icon={Check} isLoading={busy} disabled={!readyImportRows.length} onClick={confirmImport}>Import {readyImportRows.length} valid question{readyImportRows.length === 1 ? '' : 's'}</Button>
           </>
         )}
       >

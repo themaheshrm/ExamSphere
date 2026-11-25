@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { KeyRound } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
@@ -6,6 +6,7 @@ import PageHeader from '../../components/common/PageHeader';
 import { useToast } from '../../components/common/Toast';
 import { authService } from '../../services/authService';
 import { activityLogService } from '../../services/activityLogService';
+import { useAsync } from '../../utils/useAsync';
 import { readJson, writeJson } from '../../services/localStore';
 import { useAuth } from '../../context/AuthContext';
 import { INSTITUTION, ROLE_LABELS } from '../../utils/constants';
@@ -24,7 +25,8 @@ export default function ProfilePage() {
   const prefsKey = user?.id || 'anonymous';
   const [prefs, setPrefs] = useState(() => ({ submissionAlerts: true, publicationAlerts: true, ...(readJson(PREFS_KEY, {})[prefsKey] || {}) }));
   const [sending, setSending] = useState(false);
-  const myActivity = useMemo(() => activityLogService.list().filter((e) => e.actor.name === user?.name).slice(0, 8), [user]);
+  const { data: activity } = useAsync(() => activityLogService.list({ limit: 100 }), [user?.id]);
+  const myActivity = (activity || []).filter((e) => e.userId === user?.id).slice(0, 8);
 
   const savePrefs = () => {
     const all = readJson(PREFS_KEY, {});

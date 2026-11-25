@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { platformService } from '../../services/platformService';
+import { useSettings } from '../../context/SettingsContext';
 import { INSTITUTION } from '../../utils/constants';
 
 const COPYRIGHT_YEAR = new Date().getFullYear();
@@ -19,7 +19,7 @@ export function InstitutionMark({ size = 'md', inverted = false }) {
 
 /** Minimal institutional header shared by the home, login and recovery pages. */
 export function PublicHeader({ right }) {
-  const settings = platformService.getSettings();
+  const { settings } = useSettings();
   return (
     <>
       <div className="h-1 bg-[#1E3A5F]" aria-hidden="true" />
@@ -51,7 +51,7 @@ export function PublicHeader({ right }) {
 
 /** Simple institutional footer: college address and COE contact. */
 export function PublicFooter() {
-  const settings = platformService.getSettings();
+  const { settings } = useSettings();
   return (
     <footer className="border-t border-slate-200 bg-white">
       <div className="mx-auto grid max-w-6xl gap-6 px-5 py-10 text-xs leading-relaxed text-slate-500 sm:grid-cols-2 sm:px-8">

@@ -10,14 +10,15 @@ import StatCard from '../../components/common/StatCard';
 import StatusBadge from '../../components/common/StatusBadge';
 import EmptyState from '../../components/common/EmptyState';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/common/Table';
-import { scopedQuestionBank } from '../../services/scopedQuestionBank';
+import Alert from '../../components/common/Alert';
 import { useAdminExamContext } from '../../utils/useAdminExamContext';
-import { ExamSwitcher, ExamNotCreated, ScopeDenied } from '../../components/admin/ExamScope';
-import { studentRosterService } from '../../services/studentRosterService';
+import { ExamSwitcher, AdminExamGate } from '../../components/admin/ExamScope';
+import { examsApi, examDateOf } from '../../services/api/examsApi';
+import { questionsApi } from '../../services/api/questionsApi';
+import { rosterApi } from '../../services/api/rosterApi';
 import { activityLogService } from '../../services/activityLogService';
-import { useDataVersion } from '../../utils/useDataVersion';
+import { useAsync, useAutoReload } from '../../utils/useAsync';
 import { formatRelative } from '../../utils/format';
-import { useAuth } from '../../context/AuthContext';
 
 function Step({ done, label, detail, to }) {
   const Icon = done ? CheckCircle2 : Circle;
@@ -33,37 +34,48 @@ function Step({ done, label, detail, to }) {
   );
 }
 
-function DashboardView({ service, examCode, summaries, selectExam, scope }) {
+async function loadDashboard(exam) {
+  const [bank, roster, candidates, activity] = await Promise.all([
+    questionsApi.list(),
+    rosterApi.list(),
+    examsApi.candidates(exam.id),
+    // RLS already limits subject-scoped admins to their own actions.
+    activityLogService.list({ limit: 6 }),
+  ]);
+  const submitted = candidates
+    .filter((c) => ['submitted', 'auto_submitted'].includes(c.attemptStatus) && c.score !== null)
+    .map((c) => ({ attemptId: c.attemptId, studentIdentifier: c.usn, name: c.name, paperCode: c.paperCode, submittedAt: c.submittedAt, result: { score: c.score, maxScore: c.maxScore, percentage: c.percentage } }))
+    .sort((a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt)));
+  return {
+    questions: bank.filter((x) => x.subjectCode === exam.courseCode),
+    roster,
+    eligible: candidates.filter((c) => c.assignmentStatus === 'assigned').length,
+    active: candidates.filter((c) => c.attemptStatus === 'active').length,
+    submitted,
+    avg: submitted.length ? submitted.reduce((sum, a) => sum + a.result.percentage, 0) / submitted.length : null,
+    activity,
+  };
+}
+
+function DashboardView({ exam: current, examCode, summaries, selectExam, scope }) {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const q = `?exam=${examCode}`;
-  useDataVersion(); // re-render when exam, roster or activity data changes
+  const { data: loaded, error, reload } = useAsync(() => loadDashboard(current), [current.id]);
+  useAutoReload(reload, 30000);
+  const data = loaded || { questions: [], roster: [], eligible: 0, active: 0, submitted: [], avg: null, activity: [] };
 
-  const data = (() => {
-    const exam = service.getExamState();
-    const questions = scopedQuestionBank(scope).getQuestions();
-    const roster = studentRosterService.list();
-    const attempts = service.listAttempts();
-    const submitted = attempts.filter((a) => a.status === 'submitted' && a.result);
-    const avg = submitted.length ? submitted.reduce((s, a) => s + a.result.percentage, 0) / submitted.length : null;
-    return {
-      exam,
-      questions,
-      roster,
-      eligible: roster.filter((s) => s.status === 'Eligible').length,
-      active: attempts.filter((a) => a.status === 'active').length,
-      submitted,
-      avg,
-      // Subject-scoped admins see only their own actions, never another subject's.
-      activity: activityLogService.list()
-        .filter((e) => !scope.scoped || (e.actor?.identifier && e.actor.identifier === user?.staffId))
-        .slice(0, 6),
-    };
-  })();
-
-  const { exam } = data;
-  const verified = Boolean(exam.verificationReport?.isValid);
-  const byName = Object.fromEntries(data.roster.map((s) => [s.usn, s.name]));
+  // Shape the server exam like the console expects.
+  const exam = {
+    isPublished: current.isPublished,
+    lastGeneratedAt: current.patternsGeneratedAt,
+    masterQuestions: { length: current.questionCount },
+    meta: {
+      courseCode: current.courseCode, courseTitle: current.courseTitle, semester: current.semesterLabel,
+      examDate: examDateOf(current) || '—', durationMinutes: current.durationMinutes, totalMarks: current.totalMarks ?? '—',
+    },
+  };
+  const verified = current.patternCount === 10 && !current.patternsStale;
+  const byName = Object.fromEntries(data.submitted.map((a) => [a.studentIdentifier, a.name]));
 
   return (
     <div className="space-y-6">
@@ -79,6 +91,12 @@ function DashboardView({ service, examCode, summaries, selectExam, scope }) {
           </>
         )}
       />
+
+      {error && (
+        <Alert tone="danger" title="Could not load dashboard data">
+          {error.message} <button type="button" className="ml-2 font-semibold underline" onClick={reload}>Try again</button>
+        </Alert>
+      )}
 
       <section className="overflow-hidden rounded-sm border border-slate-200 bg-white">
         <div className="flex flex-col gap-2 bg-[#1E3A5F] px-5 py-3 text-white sm:flex-row sm:items-center sm:justify-between">
@@ -191,7 +209,9 @@ function DashboardView({ service, examCode, summaries, selectExam, scope }) {
 
 export default function AdminDashboard() {
   const ctx = useAdminExamContext();
-  if (!ctx.allowed) return <ScopeDenied examCode={ctx.examCode} scope={ctx.scope} />;
-  if (!ctx.service.exists()) return <ExamNotCreated eyebrow="Examination Office" title="Dashboard" examCode={ctx.examCode} summaries={ctx.summaries} onSelect={ctx.selectExam} scope={ctx.scope} />;
-  return <DashboardView key={ctx.examCode} {...ctx} />;
+  return (
+    <AdminExamGate ctx={ctx} eyebrow="Examination Office" title="Dashboard" requireExam>
+      {(c) => <DashboardView key={c.exam.id} {...c} />}
+    </AdminExamGate>
+  );
 }

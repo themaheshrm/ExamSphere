@@ -36,7 +36,7 @@ The **institution administrator** (e.g. `ADM-8942`) and the **super administrato
   - An answer sheet can only be graded by the exam that issued it.
 - **Database.** Migration `supabase/migrations/011_subject_admin_scoping.sql` uses `subject_admins`, restrictive RLS, write-guard triggers and guarded report RPCs; see `docs/database/ARCHITECTURE.md` §11. It is **not applied**. Review it, then apply it after 005–010.
 
-**Limitation of the current build:** until 005–011 are applied and the frontend reads exams from Supabase, the question bank, exams and results live in the browser's storage. The web-app checks above apply to everything the UI and its services do, but a technical user could still edit browser storage with developer tools. Only the database layer (011) closes that. Run the whole demo in **one browser profile on one computer**.
+**Enforcement:** the question bank, exams, candidates and results are read from Supabase, and migration 011 enforces each subject admin's scope in the database. The web app's checks are only a convenience layer. This needs 005–013 applied; see `docs/EXAM_ENGINE_SUPABASE.md`.
 
 ## 1. Provision the accounts (one-time, operator machine)
 
