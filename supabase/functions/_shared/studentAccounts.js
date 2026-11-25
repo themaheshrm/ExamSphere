@@ -248,7 +248,51 @@ export async function createStudentAccount({ admin, callerUser, input, log = () 
 }
 
 // ─── First-login password change ─────────────────────────────────────────────
-export async function changeTemporaryPassword({ admin, callerUser, input, verifyPassword, log = () => {} }) {
+/** Payload of a JWT already verified by auth.getUser (no signature check here). */
+export function jwtClaims(token) {
+  try {
+    const part = String(token).split('.')[1];
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '=');
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))));
+  } catch {
+    return {};
+  }
+}
+
+const RECOVERY_WINDOW_SECONDS = 60 * 60;
+
+/** True when the session was created from a password-recovery email link within the last hour. */
+export function isRecentRecoverySession(claims, now = Date.now()) {
+  const entries = Array.isArray(claims?.amr) ? claims.amr : [];
+  return entries.some((e) => {
+    if (e === 'recovery') return true; // RFC 8176 string form carries no timestamp; token expiry bounds it
+    return e?.method === 'recovery' && Number(e.timestamp) * 1000 > now - RECOVERY_WINDOW_SECONDS * 1000;
+  });
+}
+
+/**
+ * Password set from a recovery email link (any role). The caller proved email
+ * ownership through Supabase's recovery flow, so no current password is asked;
+ * the server enforces the policy and clears any temporary-password flag.
+ */
+async function setRecoveredPassword({ admin, callerUser, input, claims, log }) {
+  if (!isRecentRecoverySession(claims)) {
+    throw new HttpError(403, 'This reset link has expired. Request a new one.');
+  }
+  const newPassword = String(input?.newPassword ?? '');
+  const problems = passwordProblems(newPassword, { usn: callerUser.app_metadata?.usn || callerUser.app_metadata?.staff_id });
+  if (problems.length) throw new HttpError(422, `The new password needs ${problems.join(', ')}.`, { newPassword: `Needs ${problems.join(', ')}.` });
+  const { error } = await admin.auth.admin.updateUserById(callerUser.id, {
+    password: newPassword,
+    app_metadata: { ...callerUser.app_metadata, must_change_password: false, password_changed_at: new Date().toISOString() },
+  });
+  if (error) throw new Error(`updateUserById failed: ${error.message}`);
+  log('change-temporary-password: recovered', { user: callerUser.id });
+  return { ok: true };
+}
+
+export async function changeTemporaryPassword({ admin, callerUser, input, verifyPassword, claims = {}, log = () => {} }) {
+  if (input?.mode === 'recovery') return setRecoveredPassword({ admin, callerUser, input, claims, log });
   if (callerUser.app_metadata?.must_change_password !== true) {
     throw new HttpError(409, 'This account has no temporary password to change.');
   }
@@ -299,7 +343,7 @@ export async function authenticatedCall(request, { admin, allowedOrigins = [], l
     if (raw.length > MAX_BODY_BYTES) throw new HttpError(413, 'Request too large.');
     let input;
     try { input = raw ? JSON.parse(raw) : {}; } catch { throw new HttpError(400, 'Invalid JSON body.'); }
-    const result = await action(data.user, input);
+    const result = await action(data.user, input, jwtClaims(token));
     return respond(request, allowedOrigins, 200, result);
   } catch (error) {
     if (error instanceof HttpError) {
@@ -315,7 +359,7 @@ export function handleCreateStudent(request, deps) {
 }
 
 export function handleChangeTemporaryPassword(request, deps) {
-  return authenticatedCall(request, deps, (callerUser, input) => changeTemporaryPassword({
-    admin: deps.admin, callerUser, input, verifyPassword: deps.verifyPassword, log: deps.log,
+  return authenticatedCall(request, deps, (callerUser, input, claims) => changeTemporaryPassword({
+    admin: deps.admin, callerUser, input, claims, verifyPassword: deps.verifyPassword, log: deps.log,
   }));
 }

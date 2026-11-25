@@ -9,8 +9,7 @@ import { DEFAULT_EXAM_CODE } from '../../services/adminScope';
 import { studentRosterService } from '../../services/studentRosterService';
 import { activityLogService } from '../../services/activityLogService';
 import { platformService } from '../../services/platformService';
-import { studentInfo } from '../../data/studentMockData';
-import { INSTITUTION } from '../../utils/constants';
+import { INSTITUTION, USER_ROLES } from '../../utils/constants';
 import { formatDateTime } from '../../utils/format';
 import Modal from '../../components/common/Modal';
 import Button from '../../components/common/Button';
@@ -97,11 +96,11 @@ export default function ExamInterface() {
   const [examService] = useState(() => getExamService(searchParams.get('exam') || DEFAULT_EXAM_CODE));
 
   // ── Student details ────────────────────────────────────────────────────────
-  const studentName = user?.name || studentInfo.name;
-  const studentUsn = user ? (user.usn || user.identifier || 'Student ID unavailable') : studentInfo.usn;
-  const studentIdentity = user
-    ? (user.usn || user.identifier || user.id || null)
-    : studentInfo.usn;
+  const studentName = user?.name || 'Candidate';
+  const studentUsn = user?.usn || user?.identifier || 'Student ID unavailable';
+  // Only student accounts receive a paper (defence in depth behind the route guard).
+  const isStudentAccount = user?.role === USER_ROLES.STUDENT;
+  const studentIdentity = isStudentAccount ? (user.usn || user.identifier || user.id || null) : null;
   const [isEligible] = useState(() => !studentIdentity || studentRosterService.isEligible(studentIdentity));
   // Prevent unintended retakes from the UI: a candidate with a submitted
   // attempt for this course (and none in progress) sees their receipt instead.
@@ -118,7 +117,9 @@ export default function ExamInterface() {
   // Returns null when unpublished or storage is unavailable; withheld
   // candidates are stopped before an attempt is created.
   const [studentExam] = useState(() => (isEligible && !alreadySubmitted ? examService?.getStudentExam(studentIdentity) ?? null : null));
-  const unavailableMessage = !studentIdentity
+  const unavailableMessage = !isStudentAccount
+    ? 'Examinations can only be taken from a student account.'
+    : !studentIdentity
     ? 'A verified student identifier is required before an exam attempt can be assigned.'
     : !isEligible
       ? 'Your eligibility for this examination has been withheld by the examination office. Please contact the examination cell.'

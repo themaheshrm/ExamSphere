@@ -61,6 +61,7 @@ Settings to check:
   supabase secrets set ALLOWED_ORIGINS=https://your-examsphere-domain
   ```
 - **Auth → Sign In / Providers.** Turn off **Allow new users to sign up**. Accounts are created only by the function or the scripts.
+- **Auth → URL Configuration.** Add `https://<your-site>/reset-password` to the redirect URLs. Password-reset emails link there; the page sets the new password through `change-temporary-password` (`mode: recovery`). It accepts only a session created from a recovery link in the last hour, and it also clears any temporary-password flag.
 - **Auth → Password security.** A minimum length of at least 12 matches the app's policy.
 
 ### Optional: database-side gate (migration 012, not applied)

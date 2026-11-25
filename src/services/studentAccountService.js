@@ -26,6 +26,11 @@ export const studentAccountService = {
     return invokeFunction('create-student', { name, usn, email, mobile, department, semester: Number(semester), section });
   },
 
+  /** Set a new password from a recovery-link session (server checks the link and the policy). */
+  setRecoveredPassword(newPassword) {
+    return invokeFunction('change-temporary-password', { mode: 'recovery', newPassword });
+  },
+
   /** First sign-in: replace the temporary password. Caller then refreshes the session. */
   changeTemporaryPassword({ currentPassword, newPassword }) {
     return invokeFunction('change-temporary-password', { currentPassword, newPassword });

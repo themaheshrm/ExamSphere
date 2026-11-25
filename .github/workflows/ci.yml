@@ -1,0 +1,67 @@
+# ExamSphere CI: unit/function tests, lint, production build and the
+# database security tests (all migrations replayed into a throwaway Postgres).
+# No secrets are used; nothing here touches the Supabase project.
+name: CI
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: Tests, lint and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unit and Edge Function tests
+        run: npm test
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: https://example.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: ci-placeholder
+
+  database:
+    name: Database migrations and security tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install psql
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Replay migrations 001–012 and run supabase/tests
+        run: |
+          bash supabase/tests/run_local.sh 2>&1 | tee db-tests.log
+          grep -q "SUBJECT ADMIN SCOPE TEST COMPLETE" db-tests.log
+          grep -q "TEMPORARY PASSWORD GATE TEST COMPLETE" db-tests.log
+          if grep -q "FAIL" db-tests.log; then echo "Database test failure"; exit 1; fi
+          echo "PASS assertions: $(grep -c PASS db-tests.log)"

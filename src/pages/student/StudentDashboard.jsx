@@ -1,14 +1,10 @@
 import React, { useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowRight, Award, Bell, BookOpenCheck, CalendarDays, CheckCheck, Clock, KeyRound, LifeBuoy, MapPin, Megaphone,
+  AlertTriangle, ArrowRight, Award, Bell, BookOpenCheck, CalendarDays, CheckCheck, Clock, KeyRound, LifeBuoy, Megaphone,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import {
-  studentInfo,
-  activeExam,
-  upcomingExams,
-  recentResults,
   announcements,
 } from '../../data/studentMockData';
 import Modal from '../../components/common/Modal';
@@ -57,18 +53,20 @@ export default function StudentDashboard() {
   const meta = examState.meta;
   const isCbtPublished = examState.isPublished;
 
-  const currentStudent = {
-    name: user?.name || studentInfo.name,
-    usn: user ? (user.usn || user.identifier || 'Unavailable') : studentInfo.usn,
-    department: studentInfo.department,
-    semester: studentInfo.semester,
-    section: studentInfo.section,
-    institution: studentInfo.institution,
-    email: user?.email || studentInfo.email,
-  };
-
-  const studentIdentity = user ? (user.usn || user.identifier || user.id || null) : studentInfo.usn;
+  const studentIdentity = user ? (user.usn || user.identifier || user.id || null) : null;
   const normalizedId = String(studentIdentity ?? '').trim().toUpperCase();
+  // Genuine data only: the signed-in account and its roster entry. Nothing from sample data.
+  const rosterRecord = studentRosterService.find(normalizedId);
+  const currentStudent = {
+    name: user?.name || rosterRecord?.name || '—',
+    usn: user?.usn || user?.identifier || '—',
+    department: rosterRecord?.department || '—',
+    semester: rosterRecord?.semester ? `Semester ${rosterRecord.semester}` : '—',
+    section: rosterRecord?.section ? `Section ${rosterRecord.section}` : '—',
+    institution: INSTITUTION.name,
+    email: user?.email || rosterRecord?.email || '—',
+  };
+  const isStudentAccount = user?.role === USER_ROLES.STUDENT;
   const assignedPattern = assignPatternForCandidate(studentIdentity);
   const eligible = studentRosterService.isEligible(normalizedId);
   const rosterEntry = studentRosterService.find(normalizedId);
@@ -85,7 +83,6 @@ export default function StudentDashboard() {
         : isCbtPublished ? 'Live' : 'Draft';
   const cbtLabel = { Withheld: 'Eligibility withheld', 'In progress': 'Attempt in progress', Submitted: 'Submitted', Live: 'Open now', Draft: 'Under moderation' }[cbtState];
   const canStart = eligible && (activeAttempt || (isCbtPublished && !submittedResult));
-  const otherExams = upcomingExams.filter((e) => e.courseCode !== meta.courseCode);
 
   // Published subject examinations (created by subject-scoped admins). Each has
   // its own patterns and results; the candidate's paper and grading come from
@@ -99,6 +96,7 @@ export default function StudentDashboard() {
     return { subject, meta: state.meta, active, result, status };
   });
   const subjectAction = (exam, size = 'sm') => {
+    if (!isStudentAccount) return <Button size={size} variant="secondary" disabled>Students only</Button>;
     if (!eligible) return <Button size={size} variant="secondary" disabled>Not eligible</Button>;
     if (exam.active) return <Button size={size} onClick={() => navigate(`/student/exam?exam=${exam.subject.code}`)} rightIcon={ArrowRight}>Resume</Button>;
     if (exam.result) return <Button size={size} variant="secondary" onClick={() => go('results')}>View submission</Button>;
@@ -116,6 +114,7 @@ export default function StudentDashboard() {
   };
 
   const examAction = (size = 'md') => {
+    if (!isStudentAccount) return <Button size={size} variant="secondary" disabled>Students only</Button>;
     if (!eligible) return <Button size={size} variant="secondary" disabled>Not eligible</Button>;
     if (activeAttempt) return <Button size={size} onClick={() => navigate('/student/exam')} rightIcon={ArrowRight}>Resume examination</Button>;
     if (submittedResult) return <Button size={size} variant="secondary" onClick={() => go('results')}>View submission</Button>;
@@ -169,13 +168,12 @@ export default function StudentDashboard() {
                 <h3 className="text-lg font-semibold text-slate-900">{meta.courseTitle}</h3>
                 <dl className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-600">
                   <div className="flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /><dt className="sr-only">Date</dt><dd className="font-medium text-slate-900">{meta.examDate}</dd></div>
-                  <div className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /><dt className="sr-only">Time</dt><dd className="font-medium text-slate-900">{activeExam.time} · {meta.durationMinutes} min</dd></div>
-                  <div className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /><dt className="sr-only">Centre</dt><dd className="font-medium text-slate-900">{activeExam.terminal}</dd></div>
+                  <div className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /><dt className="sr-only">Time</dt><dd className="font-medium text-slate-900">{meta.durationMinutes} min</dd></div>
                   <div><dt className="inline">Marks: </dt><dd className="inline font-medium text-slate-900">{meta.totalMarks} ({meta.totalQuestions} MCQs)</dd></div>
                 </dl>
               </div>
               <div className="flex shrink-0 flex-wrap gap-2">
-                <Button variant="secondary" onClick={() => setDetailsExam('current')}>Instructions & venue</Button>
+                <Button variant="secondary" onClick={() => setDetailsExam('current')}>Instructions</Button>
                 {examAction()}
               </div>
             </div>
@@ -208,8 +206,8 @@ export default function StudentDashboard() {
 
           <section className="grid grid-cols-3 gap-2 sm:gap-4" aria-label="Summary">
             {[
-              ['Upcoming examinations', otherExams.length + (submittedResult ? 0 : 1), 'exams', BookOpenCheck],
-              ['Results declared', recentResults.length + (submittedResult && showScore ? 1 : 0), 'results', Award],
+              ['Open examinations', (isCbtPublished && !submittedResult ? 1 : 0) + subjectExams.filter((e) => !e.result).length, 'exams', BookOpenCheck],
+              ['Results', showScore ? (submittedResult ? 1 : 0) + subjectExams.filter((e) => e.result).length : 0, 'results', Award],
               ['Unread notifications', unread.length, 'notifications', Bell],
             ].map(([label, value, tab, Icon]) => (
               <button key={tab} type="button" onClick={() => go(tab)} className="flex items-start justify-between rounded-sm border border-slate-200 bg-white p-3 text-left transition-colors hover:border-slate-300 hover:bg-slate-50 sm:items-center sm:p-4">
@@ -229,7 +227,7 @@ export default function StudentDashboard() {
                   <TableRow>
                     <TableHead>Course</TableHead>
                     <TableHead align="center">Marks</TableHead>
-                    <TableHead align="center">Grade</TableHead>
+                    <TableHead align="center">Result</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -240,13 +238,16 @@ export default function StudentDashboard() {
                       <TableCell align="center"><StatusBadge status={submittedResult.passed ? 'Pass' : 'Fail'} size="sm" /></TableCell>
                     </TableRow>
                   )}
-                  {recentResults.slice(0, 4).map((res) => (
-                    <TableRow key={res.courseCode}>
-                      <TableCell><span className="font-mono font-semibold text-[#1E3A5F]">{res.courseCode}</span> {res.courseTitle}</TableCell>
-                      <TableCell align="center" className="tabular-nums">{res.scoredMarks} / {res.maxMarks}</TableCell>
-                      <TableCell align="center" className="font-semibold">{res.grade.split(' ')[0]}</TableCell>
+                  {showScore && subjectExams.filter((e) => e.result).map(({ subject, result }) => (
+                    <TableRow key={subject.code}>
+                      <TableCell><span className="font-mono font-semibold text-[#1E3A5F]">{result.courseCode}</span> {result.courseTitle} <Badge size="sm" variant="primary" className="ml-1">Provisional</Badge></TableCell>
+                      <TableCell align="center" className="tabular-nums">{result.score} / {result.maxScore}</TableCell>
+                      <TableCell align="center"><StatusBadge status={result.passed ? 'Pass' : 'Fail'} size="sm" /></TableCell>
                     </TableRow>
                   ))}
+                  {!(showScore && (submittedResult || subjectExams.some((e) => e.result))) && (
+                    <TableRow><TableCell colSpan={3} className="text-center text-xs text-slate-500">No results yet</TableCell></TableRow>
+                  )}
                 </TableBody>
               </Table>
             </Card>
@@ -271,13 +272,12 @@ export default function StudentDashboard() {
 
       {/* ═══ EXAMS ═══ */}
       {activeTab === 'exams' && (
-        <Card bodyClassName="p-0" title="Examination timetable" subtitle={`${currentStudent.semester} · ${INSTITUTION.academicYear}`}>
+        <Card bodyClassName="p-0" title="Examination timetable" subtitle={INSTITUTION.academicYear}>
           <Table className="rounded-none border-0">
             <TableHeader>
               <TableRow>
                 <TableHead>Course</TableHead>
-                <TableHead className="hidden sm:table-cell">Date & time</TableHead>
-                <TableHead className="hidden md:table-cell">Centre</TableHead>
+                <TableHead className="hidden sm:table-cell">Date</TableHead>
                 <TableHead className="hidden sm:table-cell">Status</TableHead>
                 <TableHead align="right">Action</TableHead>
               </TableRow>
@@ -287,11 +287,10 @@ export default function StudentDashboard() {
                 <TableCell>
                   <p className="font-mono text-xs font-semibold text-[#1E3A5F]">{meta.courseCode}</p>
                   <p className="font-medium text-slate-900">{meta.courseTitle}</p>
-                  <p className="text-[11px] text-slate-500 sm:hidden">{meta.examDate} · {activeExam.time}</p>
+                  <p className="text-[11px] text-slate-500 sm:hidden">{meta.examDate} · {meta.durationMinutes} min</p>
                   <p className="mt-1 sm:hidden"><StatusBadge status={cbtState} size="sm">{cbtLabel}</StatusBadge></p>
                 </TableCell>
-                <TableCell className="hidden sm:table-cell">{meta.examDate}<span className="block text-[11px] text-slate-500">{activeExam.time} · {meta.durationMinutes} min</span></TableCell>
-                <TableCell className="hidden md:table-cell">{activeExam.terminal}</TableCell>
+                <TableCell className="hidden sm:table-cell">{meta.examDate}<span className="block text-[11px] text-slate-500">{meta.durationMinutes} min</span></TableCell>
                 <TableCell className="hidden sm:table-cell"><StatusBadge status={cbtState} size="sm">{cbtLabel}</StatusBadge></TableCell>
                 <TableCell align="right"><div className="flex justify-end">{examAction('sm')}</div></TableCell>
               </TableRow>
@@ -304,22 +303,8 @@ export default function StudentDashboard() {
                     <p className="mt-1 sm:hidden"><StatusBadge status={exam.status} size="sm">{subjectStatusLabel[exam.status]}</StatusBadge></p>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">{exam.meta.examDate || 'Open'}<span className="block text-[11px] text-slate-500">{exam.meta.durationMinutes} min</span></TableCell>
-                  <TableCell className="hidden md:table-cell">{activeExam.terminal}</TableCell>
                   <TableCell className="hidden sm:table-cell"><StatusBadge status={exam.status} size="sm">{subjectStatusLabel[exam.status]}</StatusBadge></TableCell>
                   <TableCell align="right"><div className="flex justify-end">{subjectAction(exam)}</div></TableCell>
-                </TableRow>
-              ))}
-              {otherExams.map((exam) => (
-                <TableRow key={exam.id}>
-                  <TableCell>
-                    <p className="font-mono text-xs font-semibold text-[#1E3A5F]">{exam.courseCode}</p>
-                    <p className="font-medium text-slate-900">{exam.courseTitle}</p>
-                    <p className="text-[11px] text-slate-500 sm:hidden">{exam.examDate} · {exam.time} · {exam.status}</p>
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">{exam.examDate}<span className="block text-[11px] text-slate-500">{exam.time} · {exam.duration}</span></TableCell>
-                  <TableCell className="hidden md:table-cell">{exam.hall}</TableCell>
-                  <TableCell className="hidden sm:table-cell"><StatusBadge status="Pending" size="sm">{exam.status}</StatusBadge></TableCell>
-                  <TableCell align="right"><Button size="sm" variant="ghost" onClick={() => setDetailsExam(exam)}>Details</Button></TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -378,32 +363,6 @@ export default function StudentDashboard() {
             </Card>
           ))}
 
-          <Card title="Statement of marks" subtitle={`CGPA ${studentInfo.currentCgpa} · SGPA ${studentInfo.currentSgpa} · Credits ${studentInfo.totalCreditsEarned}`} bodyClassName="p-0">
-            <Table className="rounded-none border-0">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Course</TableHead>
-                  <TableHead className="hidden sm:table-cell">Exam date</TableHead>
-                  <TableHead align="center">Marks</TableHead>
-                  <TableHead align="center">Grade</TableHead>
-                  <TableHead align="center" className="hidden sm:table-cell">Credits</TableHead>
-                  <TableHead align="right" className="hidden sm:table-cell">Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {recentResults.map((res) => (
-                  <TableRow key={res.courseCode}>
-                    <TableCell><span className="font-mono font-semibold text-[#1E3A5F]">{res.courseCode}</span><span className="block text-slate-800">{res.courseTitle}</span></TableCell>
-                    <TableCell className="hidden sm:table-cell">{res.examDate}</TableCell>
-                    <TableCell align="center" className="tabular-nums">{res.scoredMarks} / {res.maxMarks}</TableCell>
-                    <TableCell align="center"><span className="font-semibold">{res.grade.split(' ')[0]}</span><span className="block text-[11px] text-slate-500">GP {res.gradePoint}</span></TableCell>
-                    <TableCell align="center" className="hidden tabular-nums sm:table-cell">{res.credits}</TableCell>
-                    <TableCell align="right" className="hidden sm:table-cell"><StatusBadge status="Pass" size="sm">{res.status}</StatusBadge></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
         </>
       )}
 
@@ -457,13 +416,9 @@ export default function StudentDashboard() {
                 ['Full name', currentStudent.name],
                 ['USN', currentStudent.usn],
                 ['Email', currentStudent.email],
-                ['Programme', studentInfo.degree],
                 ['Department', currentStudent.department],
                 ['Semester / section', `${currentStudent.semester} · ${currentStudent.section}`],
-                ['Admission batch', studentInfo.admissionBatch],
-                ['Scheme', studentInfo.scheme],
                 ['Institution', currentStudent.institution],
-                ['Mentor', studentInfo.mentorName],
               ].map(([k, v]) => (
                 <div key={k} className="border-b border-slate-100 py-2.5">
                   <dt className="text-[11px] text-slate-500">{k}</dt>
@@ -474,12 +429,8 @@ export default function StudentDashboard() {
           </Card>
           <div className="space-y-6">
             <Card title="Examination eligibility">
-              <StatusBadge status={eligible ? 'Eligible' : 'Withheld'}>{eligible ? studentInfo.eligibilityStatus : 'Withheld'}</StatusBadge>
-              <dl className="mt-3 space-y-2 text-xs">
-                <div className="flex justify-between"><dt className="text-slate-500">Attendance</dt><dd className="font-semibold text-slate-900">{studentInfo.attendancePercentage}</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">Hall</dt><dd className="text-right font-semibold text-slate-900">{studentInfo.assignedHall}</dd></div>
-                <div className="flex justify-between"><dt className="text-slate-500">Terminal</dt><dd className="font-semibold text-slate-900">{studentInfo.assignedTerminal}</dd></div>
-              </dl>
+              <StatusBadge status={eligible ? 'Eligible' : 'Withheld'}>{eligible ? 'Eligible' : 'Withheld'}</StatusBadge>
+              {!eligible && rosterEntry?.remarks && <p className="mt-2 text-xs text-slate-600">{rosterEntry.remarks}</p>}
             </Card>
             <Card title="Password">
               <Button variant="secondary" icon={KeyRound} isLoading={sendingReset} onClick={resetPassword} className="w-full">Send password reset link</Button>
@@ -506,44 +457,34 @@ export default function StudentDashboard() {
       <Modal
         isOpen={Boolean(detailsExam)}
         onClose={() => setDetailsExam(null)}
-        title={detailsExam === 'current' ? `${meta.courseCode} · ${meta.courseTitle}` : detailsExam ? `${detailsExam.courseCode} · ${detailsExam.courseTitle}` : ''}
+        title={`${meta.courseCode} · ${meta.courseTitle}`}
         maxWidth="max-w-lg"
-        footer={detailsExam === 'current' ? (
+        footer={(
           <>
             <Button variant="secondary" onClick={() => setDetailsExam(null)}>Close</Button>
             {canStart && examAction()}
           </>
-        ) : undefined}
+        )}
       >
         {detailsExam && (
           <div className="space-y-4">
             <dl className="divide-y divide-slate-100 rounded-sm border border-slate-200 text-xs">
-              {(detailsExam === 'current' ? [
-                ['Date', meta.examDate],
-                ['Time', activeExam.time],
+              {[
+                ['Date', meta.examDate || '—'],
                 ['Duration', `${meta.durationMinutes} minutes`],
                 ['Questions / marks', `${meta.totalQuestions} MCQs · ${meta.totalMarks} marks`],
-                ['Centre', activeExam.examCenter],
-                ['Terminal', activeExam.terminal],
-                ['Invigilator', activeExam.invigilator],
-              ] : [
-                ['Date', detailsExam.examDate],
-                ['Time', detailsExam.time],
-                ['Duration', detailsExam.duration],
-                ['Marks', detailsExam.marks],
-                ['Centre', detailsExam.hall],
-              ]).map(([k, v]) => (
+              ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4 px-3 py-2">
                   <dt className="text-slate-500">{k}</dt>
                   <dd className="text-right font-medium text-slate-900">{v}</dd>
                 </div>
               ))}
             </dl>
-            {detailsExam === 'current' && (
+            {meta.instructions?.length > 0 && (
               <div>
-                <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-900"><AlertTriangle className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" /> Conduct guidelines</p>
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-900"><AlertTriangle className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" /> Instructions</p>
                 <ul className="list-disc space-y-1 pl-5 text-xs leading-relaxed text-slate-700">
-                  {activeExam.guidelines.map((g) => <li key={g}>{g}</li>)}
+                  {meta.instructions.map((g) => <li key={g}>{g}</li>)}
                 </ul>
               </div>
             )}

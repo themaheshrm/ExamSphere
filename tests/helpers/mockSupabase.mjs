@@ -8,7 +8,7 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 
 export function startMockSupabase({ tables, users = [], signupTrigger = true, port = 0, host = '127.0.0.1', serviceKey = null, functions = {} }) {
-  const state = { tables: structuredClone(tables), users: structuredClone(users), writes: [], requests: [], sessions: new Map(), refresh: new Map() };
+  const state = { tables: structuredClone(tables), users: structuredClone(users), writes: [], requests: [], sessions: new Map(), refresh: new Map(), refreshAmr: new Map(), recoveryEmails: [] };
   const CORS = {
     'access-control-allow-origin': '*',
     'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type, prefer, accept-profile, content-profile, x-supabase-api-version',
@@ -21,11 +21,11 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
   // GoTrue never returns password material.
   const publicUser = ({ password: _password, rotated: _rotated, ...u }) => ({ aud: 'authenticated', role: 'authenticated', user_metadata: {}, created_at: '2026-01-01T00:00:00Z', ...u });
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-  const issueSession = (user) => {
+  const issueSession = (user, amr = [{ method: 'password', timestamp: Math.floor(Date.now() / 1000) }]) => {
     const exp = Math.floor(Date.now() / 1000) + 3600;
-    const access = `${b64({ alg: 'none', typ: 'JWT' })}.${b64({ sub: user.id, email: user.email, role: 'authenticated', aud: 'authenticated', app_metadata: user.app_metadata || {}, exp })}.mock${randomUUID().slice(0, 8)}`;
+    const access = `${b64({ alg: 'none', typ: 'JWT' })}.${b64({ sub: user.id, email: user.email, role: 'authenticated', aud: 'authenticated', app_metadata: user.app_metadata || {}, amr, exp })}.mock${randomUUID().slice(0, 8)}`;
     const refresh = randomUUID();
-    state.sessions.set(access, user.id); state.refresh.set(refresh, user.id);
+    state.sessions.set(access, user.id); state.refresh.set(refresh, user.id); state.refreshAmr.set(refresh, amr);
     return { access_token: access, token_type: 'bearer', expires_in: 3600, expires_at: exp, refresh_token: refresh, user: publicUser(user) };
   };
   const bearer = (req) => (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -94,8 +94,25 @@ export function startMockSupabase({ tables, users = [], signupTrigger = true, po
       if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'refresh_token') {
         const user = state.users.find((u) => u.id === state.refresh.get(body?.refresh_token));
         if (!user || isBanned(user)) return send(res, 400, { error: 'invalid_grant', error_description: 'Invalid Refresh Token' });
+        const amr = state.refreshAmr.get(body.refresh_token);
         state.refresh.delete(body.refresh_token);
-        return send(res, 200, issueSession(user));
+        return send(res, 200, issueSession(user, amr));
+      }
+      // Password recovery: records the "email" (link with a recovery session, implicit flow) instead of sending it.
+      if (url.pathname === '/auth/v1/recover' && req.method === 'POST') {
+        const user = state.users.find((u) => u.email === String(body?.email || '').toLowerCase());
+        if (user && !isBanned(user)) {
+          const sess = issueSession(user, [{ method: 'recovery', timestamp: Math.floor(Date.now() / 1000) }]);
+          const redirect = url.searchParams.get('redirect_to') || 'http://localhost:5173/';
+          state.recoveryEmails.push({ email: user.email, redirect, link: `${redirect}#access_token=${sess.access_token}&expires_at=${sess.expires_at}&expires_in=3600&refresh_token=${sess.refresh_token}&token_type=bearer&type=recovery` });
+        }
+        return send(res, 200, {});
+      }
+      if (url.pathname === '/auth/v1/user' && req.method === 'PUT') {
+        const user = state.users.find((u) => u.id === state.sessions.get(bearer(req)));
+        if (!user) return send(res, 401, { code: 'bad_jwt', msg: 'invalid JWT' });
+        if (body?.password) user.password = body.password;
+        return send(res, 200, publicUser(user));
       }
       if (url.pathname === '/auth/v1/user' && req.method === 'GET') {
         const user = state.users.find((u) => u.id === state.sessions.get(bearer(req)));

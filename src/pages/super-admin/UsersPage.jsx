@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Edit3, Search, UserCog, UserPlus } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
@@ -67,9 +68,14 @@ export default function UsersPage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Platform Administration"
-        title="Staff Accounts"
-        actions={<Button icon={UserPlus} onClick={() => { setEditing(EMPTY); setErrors({}); }}>Add user</Button>}
+        title="Staff Directory"
+        actions={<Button icon={UserPlus} onClick={() => { setEditing(EMPTY); setErrors({}); }}>Add entry</Button>}
       />
+
+      <Alert tone="info" title="Directory only">
+        Entries here are a local contact list and cannot sign in. Create sign-in accounts, reset passwords and assign subjects in{' '}
+        <Link to="/super-admin/admins" className="font-semibold underline">Admin Management</Link>.
+      </Alert>
 
       <Alert tone="info">
         This directory records each staff member's role and status. Sign-in credentials are issued separately through Dr. AIT's authentication provider.
@@ -133,12 +139,12 @@ export default function UsersPage() {
       <Modal
         isOpen={Boolean(editing)}
         onClose={() => setEditing(null)}
-        title={editing?.id ? `Edit ${editing.name}` : 'Add user'}
+        title={editing?.id ? `Edit ${editing.name}` : 'Add directory entry'}
         maxWidth="max-w-xl"
         footer={(
           <>
             <Button variant="secondary" onClick={() => setEditing(null)}>Cancel</Button>
-            <Button type="submit" form="user-form">{editing?.id ? 'Save changes' : 'Add user'}</Button>
+            <Button type="submit" form="user-form">{editing?.id ? 'Save changes' : 'Add entry'}</Button>
           </>
         )}
       >

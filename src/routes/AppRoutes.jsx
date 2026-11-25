@@ -6,6 +6,7 @@ import LoginPage from '../pages/auth/LoginPage';
 import HomePage from '../pages/public/HomePage';
 const ForgotPasswordPage = lazy(() => import('../pages/auth/ForgotPasswordPage'));
 const ChangePasswordPage = lazy(() => import('../pages/auth/ChangePasswordPage'));
+const ResetPasswordPage = lazy(() => import('../pages/auth/ResetPasswordPage'));
 const ComponentShowcase = lazy(() => import('../pages/design-system/ComponentShowcase'));
 const AdminDashboard = lazy(() => import('../pages/admin/AdminDashboard'));
 const ExamManagementPage = lazy(() => import('../pages/admin/ExamManagementPage'));
@@ -46,6 +47,7 @@ export default function AppRoutes() {
         {/* Public Authentication Routes */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
 
         {/* First sign-in with a temporary password (any signed-in role) */}
         <Route element={<ProtectedRoute />}>
@@ -55,9 +57,8 @@ export default function AppRoutes() {
         {/* Full-screen Exam Interface — outside DashboardLayout */}
         <Route
           element={
-            <ProtectedRoute
-              allowedRoles={[USER_ROLES.STUDENT, USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN]}
-            />
+            // Answer sheets are recorded only for student accounts; staff preview papers in the exam console.
+            <ProtectedRoute allowedRoles={[USER_ROLES.STUDENT]} />
           }
         >
           <Route path="/student/exam" element={<ExamInterface />} />
