@@ -317,10 +317,25 @@ const ACTIONS = { list: listAdmins, create: createAdmin, 'assign-subject': assig
 
 export async function manageAdmins({ admin, callerUser, input, log = () => {} }) {
   const ctx = await context(admin);
+
+  // Temporary diagnostic: verify Dr. AIT institution ID resolution.
+  log('admin-create diagnostic', {
+    institutionId: ctx.institutionId,
+    hasInstitutionId: Boolean(ctx.institutionId),
+    institutionColumnExists: ctx.schema.has('institution_id'),
+  });
+
   await requireSuperAdmin(admin, ctx.schema, callerUser);
+
   const action = ACTIONS[input?.action];
-  if (!action) throw new HttpError(400, 'Unknown action.');
-  return action === listAdmins ? action(admin, ctx) : action(admin, ctx, callerUser, input, log);
+
+  if (!action) {
+    throw new HttpError(400, 'Unknown action.');
+  }
+
+  return action === listAdmins
+    ? action(admin, ctx)
+    : action(admin, ctx, callerUser, input, log);
 }
 
 export function handleManageAdmins(request, deps) {
