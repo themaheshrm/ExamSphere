@@ -402,7 +402,8 @@ BEGIN
    AND d.institution_id = s.institution_id
   WHERE s.institution_id = v_institution_id
     AND s.code IN ('22CS601', '22CS302', '22CS402', '22CS403', '22CS502', '22CS304')
-    AND (d.id IS NULL OR d.code <> 'CS');
+    -- a subject without a department is fine; one in another department is not
+    AND s.department_id IS NOT NULL AND (d.id IS NULL OR d.code <> 'CS');
 
   SELECT count(*) INTO v_catalogue_question_count
   FROM pg_temp.seed_catalogue_questions src
