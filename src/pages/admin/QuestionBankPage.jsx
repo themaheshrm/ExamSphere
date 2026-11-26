@@ -48,6 +48,8 @@ export default function QuestionBankPage() {
   const questions = useMemo(() => data?.list || [], [data]);
   const subjectRows = useMemo(() => data?.subjectRows || [], [data]);
   const scopedSubject = scope.scoped ? subjectRows.find((x) => x.code === scope.subjectCodes[0]) || null : null;
+  // Dr. AIT (single institution); needed by the super admin, who has no institution of their own.
+  const institutionId = subjectRows[0]?.institutionId || null;
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
@@ -126,7 +128,7 @@ export default function QuestionBankPage() {
     }
     setBusy(true);
     try {
-      const saved = await questionsApi.save(form, editingQuestion?.id ?? null);
+      const saved = await questionsApi.save({ ...form, institutionId }, editingQuestion?.id ?? null);
       refreshQuestions();
       setQuestionModal(false);
       log(editingQuestion ? 'Edited question' : 'Added question', `Q${saved.questionNo}`, saved.statement.slice(0, 80));
@@ -175,7 +177,7 @@ export default function QuestionBankPage() {
     if (selectedIds.length !== 25) return;
     const selectedQuestions = selectedIds.map((id) => questions.find((item) => item.id === id)).filter(Boolean);
     // Target exam: the single subject of all 25 questions; otherwise
-    // (institution-wide admins only) the original 22CS601 examination.
+    // (super admin only) the original 22CS601 examination.
     const codes = [...new Set(selectedQuestions.map((q) => q.subjectCode || null))];
     const target = codes.length === 1 && codes[0] ? codes[0] : (!scope.scoped ? DEFAULT_EXAM_CODE : null);
     if (!target || selectedQuestions.length !== 25) {
@@ -254,7 +256,7 @@ export default function QuestionBankPage() {
     setBusy(true);
     try {
       const ready = readyImportRows;
-      const result = await questionsApi.import(importFileName, ready.map((row) => ({ ...row.question, rowNumber: row.rowNumber })));
+      const result = await questionsApi.import(importFileName, ready.map((row) => ({ ...row.question, rowNumber: row.rowNumber })), institutionId);
       const rejected = Object.fromEntries((result.rejections || []).map((r) => [Number(r.rowNumber), r.errors || []]));
       refreshQuestions();
       setImportRows((current) => current.map((row) => {

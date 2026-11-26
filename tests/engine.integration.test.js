@@ -39,6 +39,8 @@ test('examination engine on Supabase: four roles, server patterns, attempts, gra
 
   // ── accounts ──────────────────────────────────────────────────────────────
   await env.createSuperAdmin({ email: 'root@examsphere.io', name: 'Platform Administrator', password: PASSWORD });
+  // Legacy institution-wide admin kept as an existing account (no subject); the
+  // examination office work below is done by the super admin and subject admins.
   await env.createAdmin({ staffId: 'ADM-8942', name: 'Dr. Ramesh B.', password: PASSWORD, email: 'admin@drait.edu.in' });
   await env.createAdmin({ staffId: 'ADMIN001', name: 'Admin 01', password: PASSWORD, subjectCode: '22CS302' });
   await env.createAdmin({ staffId: 'ADMIN003', name: 'Admin 03', password: PASSWORD, subjectCode: '22CS403' });
@@ -62,20 +64,21 @@ test('examination engine on Supabase: four roles, server patterns, attempts, gra
   let patterns;
   let master;
 
-  await t.test('institution admin: question bank CRUD and import (server-validated)', async () => {
-    await signIn('admin@drait.edu.in');
+  await t.test('super admin: question bank CRUD and import (server-validated, Dr. AIT institution passed explicitly)', async () => {
+    await signIn('root@examsphere.io');
+    const institutionId = env.institutionId;
     const bank = await questionsApi.list();
     assert.ok(bank.length >= 150, `seeded bank visible (${bank.length})`);
-    const saved = await questionsApi.save({ subject: 'Operating Systems', topic: 'Scheduling', statement: 'Integration test: which scheduler is non-preemptive?', options: ['FCFS', 'Round robin', 'SRTF', 'Preemptive priority'], correctOption: 0, difficulty: 'Easy', marks: 2, negativeMarks: 0 });
+    const saved = await questionsApi.save({ institutionId, subject: 'Operating Systems', topic: 'Scheduling', statement: 'Integration test: which scheduler is non-preemptive?', options: ['FCFS', 'Round robin', 'SRTF', 'Preemptive priority'], correctOption: 0, difficulty: 'Easy', marks: 2, negativeMarks: 0 });
     assert.equal(saved.subjectCode, '22CS403');
     const edited = await questionsApi.save({ subject: '22CS403', topic: 'CPU Scheduling', statement: saved.statement, options: saved.options, correctOption: 0, difficulty: 'Medium', marks: 2, negativeMarks: 0 }, saved.id);
     assert.equal(edited.topic, 'CPU Scheduling');
-    await assert.rejects(questionsApi.save({ subject: '22CS403', topic: 'x', statement: saved.statement, options: ['a', 'b', 'c', 'd'], correctOption: 1, difficulty: 'Easy', marks: 2 }), /duplicate|already/i, 'duplicate statement rejected by the server');
+    await assert.rejects(questionsApi.save({ institutionId, subject: '22CS403', topic: 'x', statement: saved.statement, options: ['a', 'b', 'c', 'd'], correctOption: 1, difficulty: 'Easy', marks: 2 }), /duplicate|already/i, 'duplicate statement rejected by the server');
     assert.equal(await questionsApi.remove(saved.id), 'deleted');
     const imported = await questionsApi.import('it.csv', [
       { rowNumber: 2, subject: 'Computer Networks', topic: 'Layers', statement: 'Integration import: which layer routes packets?', options: ['Network', 'Transport', 'Session', 'Physical'], correctOption: 0, difficulty: 'Easy', marks: 2 },
       { rowNumber: 3, subject: 'Computer Networks', topic: 'Layers', statement: bank[0].statement, options: ['a', 'b', 'c', 'd'], correctOption: 0, difficulty: 'Easy', marks: 2 },
-    ]);
+    ], institutionId);
     assert.equal(imported.imported, 1);
     assert.equal(imported.rejected, 1);
   });
@@ -201,7 +204,7 @@ test('examination engine on Supabase: four roles, server patterns, attempts, gra
   });
 
   await t.test('admin results: register, per-question breakdown with key, item analysis', async () => {
-    await signIn('admin@drait.edu.in');
+    await signIn('root@examsphere.io');
     const cands = await examsApi.candidates(examId);
     const cs003 = cands.find((c) => c.usn === 'CS003');
     assert.equal(cs003.attemptStatus, 'submitted');
@@ -225,7 +228,7 @@ test('examination engine on Supabase: four roles, server patterns, attempts, gra
     assert.equal((await studentExamApi.withheld())[0].reason, 'Attendance below 85%');
     await assert.rejects(studentExamApi.start(examId), /not assigned/);
 
-    await signIn('admin@drait.edu.in');
+    await signIn('root@examsphere.io');
     await examsApi.assign(examId, [target.studentId]);
     cands = await examsApi.candidates(examId);
     assert.equal(cands.find((c) => c.usn === '1DA22CS002').assignmentStatus, 'assigned');
@@ -239,8 +242,37 @@ test('examination engine on Supabase: four roles, server patterns, attempts, gra
     assert.equal(second.paperCode, '22CS403-C', 'pattern unchanged after reset');
   });
 
+  await t.test('Admin Management (manage-admins / create-student on the real schema): subject admin and student creation', async () => {
+    await signIn('root@examsphere.io');
+    const call = async (fn, body) => {
+      const { data, error } = await supabase.functions.invoke(fn, { body });
+      if (error) {
+        const detail = await error.context?.json?.().catch(() => null);
+        return { error: detail?.error || error.message, fieldErrors: detail?.fieldErrors, status: error.context?.status };
+      }
+      return data;
+    };
+    const created = await call('manage-admins', { action: 'create', name: 'OS Examiner', adminId: 'ADMIN006', email: '', adminType: 'subject', subjectCode: '22CS502', status: 'Inactive' });
+    assert.ok(created.admin, JSON.stringify(created));
+    const [profile] = await env.sql('SELECT role::text, institution_id, staff_id, email, is_active FROM public.profiles WHERE id = $1', [created.admin.id]);
+    assert.deepEqual([profile.role, profile.institution_id, profile.staff_id, profile.email, profile.is_active],
+      ['admin', env.institutionId, 'ADMIN006', 'admin006@drait.edu.in', false], 'admin profile with the Dr. AIT institution (no profiles_scoped_role_chk error)');
+    const [link] = await env.sql("SELECT s.code FROM public.subject_admins sa JOIN public.subjects s ON s.id = sa.subject_id WHERE sa.admin_id = $1", [created.admin.id]);
+    assert.equal(link.code, '22CS502', 'subject_admins row written → database-level subject scope');
+    const refused = await call('manage-admins', { action: 'create', name: 'Inst Admin', adminId: 'ADMIN012', email: '', adminType: 'institution', subjectCode: '', status: 'Active' });
+    assert.equal(refused.status, 422, 'Institution Admin cannot be created');
+
+    const student = await call('create-student', { name: 'New Student', usn: '1DA22CS777', mobile: '+91 90000 00777', semester: 5, section: 'B' });
+    assert.ok(student.credentials, JSON.stringify(student));
+    const [sp] = await env.sql('SELECT role::text, institution_id, usn FROM public.profiles WHERE usn = $1', ['1DA22CS777']);
+    assert.deepEqual([sp.role, sp.institution_id, sp.usn], ['student', env.institutionId, '1DA22CS777']);
+
+    await signIn('admin001@drait.edu.in');
+    assert.equal((await call('create-student', { name: 'Other', usn: '1DA22CS778', mobile: '+91 90000 00778', semester: 5, section: 'B' })).status, 403, 'subject admin cannot create students');
+  });
+
   await t.test('super admin: platform settings and overview; settings readable by all', async () => {
-    await signIn('admin@drait.edu.in');
+    await signIn('admin001@drait.edu.in');
     await assert.rejects(platformApi.saveSettings({ maintenanceNotice: 'nope' }));
     await signIn('root@examsphere.io');
     const saved = await platformApi.saveSettings({ ...(await platformApi.settings()), maintenanceNotice: 'Maintenance on Sunday', timerWarningMinutes: 10 });

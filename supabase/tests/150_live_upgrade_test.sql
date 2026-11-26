@@ -68,4 +68,23 @@ VALUES ('aaaa0000-0000-0000-0000-0000000000f4', 'cs009@drait.edu.in',
                            'institution_id', (SELECT id FROM public.institutions WHERE code = '1DA')));
 SELECT test.ok((SELECT usn FROM public.profiles WHERE id = 'aaaa0000-0000-0000-0000-0000000000f4') = 'CS009', 'new student account gets a profile');
 
+-- ── 014: admin-API creation writes app_metadata in a second statement ───────
+INSERT INTO auth.users (id, email, raw_app_meta_data)
+VALUES ('aaaa0000-0000-0000-0000-0000000000f5', 'admin009@drait.edu.in', '{"provider":"email","providers":["email"]}');
+SELECT test.ok(NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = 'aaaa0000-0000-0000-0000-0000000000f5'),
+               '014: no half-formed profile before the metadata arrives (no profiles_scoped_role_chk error)');
+UPDATE auth.users SET raw_app_meta_data = raw_app_meta_data || jsonb_build_object(
+  'role', 'admin', 'staff_id', 'ADMIN009', 'full_name', 'Admin 09', 'admin_type', 'subject', 'subject_code', '22CS304',
+  'institution_id', (SELECT id FROM public.institutions WHERE code = '1DA'))
+WHERE id = 'aaaa0000-0000-0000-0000-0000000000f5';
+SELECT test.ok((SELECT role = 'admin' AND staff_id = 'ADMIN009' AND institution_id = (SELECT id FROM public.institutions WHERE code = '1DA')
+                FROM public.profiles WHERE id = 'aaaa0000-0000-0000-0000-0000000000f5'), '014: profile created once the signed metadata is written');
+INSERT INTO auth.users (id, email, raw_app_meta_data)
+VALUES ('aaaa0000-0000-0000-0000-0000000000f6', 'selfsignup@example.test', '{"provider":"email","providers":["email"],"role":"super_admin"}');
+UPDATE auth.users SET raw_user_meta_data = '{"role":"super_admin"}' WHERE id = 'aaaa0000-0000-0000-0000-0000000000f6';
+SELECT test.ok(NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = 'aaaa0000-0000-0000-0000-0000000000f6'),
+               '014: super_admin can never be granted through metadata');
+SELECT test.ok((SELECT role FROM public.profiles WHERE id = 'aaaa0000-0000-0000-0000-0000000000f1') = 'super_admin'
+               AND (SELECT count(*) FROM public.profiles WHERE id::text LIKE 'aaaa0000-%') = 5, '014: existing profiles untouched');
+
 \echo LIVE UPGRADE TEST COMPLETE

@@ -3,11 +3,14 @@
  * `manage-admins`). Plain JavaScript shared by Deno and the Node tests; the
  * service-role client is injected and never reaches the browser.
  *
- * Model (no migrations required):
- *  - An administrator is a `profiles` row with role 'admin' plus its Auth user.
- *  - Admin ID, admin type ('institution' | 'subject') and subject code live in
- *    Auth app_metadata — writable only with the service role and carried in the
- *    signed session token the web app reads.
+ * Roles: Super Admin (profiles.role 'super_admin', platform-wide), Subject
+ * Admin and Student. There is no institution-wide administrator.
+ *  - A Subject Admin is a `profiles` row with role 'admin' (institution Dr.
+ *    AIT) plus its Auth user, with app_metadata.admin_type = 'subject' and a
+ *    valid subject_code — writable only with the service role and carried in
+ *    the signed session token the web app reads.
+ *  - Older admins without a subject are listed as "No subject assigned" and
+ *    can be given one; they are never deleted or changed automatically.
  *  - When migration 011 is applied, `subject_admins` is kept in sync so the
  *    database enforces the same subject scope (RLS + write guards).
  *
@@ -73,10 +76,10 @@ export function effectiveAssignment(user, profile) {
   const md = user.app_metadata || {};
   const adminId = String(profile?.staff_id || md.staff_id || '').toUpperCase() || null;
   if (md.subject_code) return { adminId, adminType: 'subject', subjectCode: String(md.subject_code).toUpperCase() };
-  if (md.admin_type === 'institution') return { adminId, adminType: 'institution', subjectCode: null };
   const demo = DEMO_ADMIN_SUBJECTS[adminId] || DEMO_ADMIN_SUBJECTS[String(user.email || '').split('@')[0].toUpperCase()];
   if (demo) return { adminId: adminId || String(user.email).split('@')[0].toUpperCase(), adminType: 'subject', subjectCode: demo };
-  return { adminId, adminType: md.admin_type === 'subject' ? 'subject' : 'institution', subjectCode: null };
+  // Every administrator is a subject admin; one without a subject has no exam access yet.
+  return { adminId, adminType: 'subject', subjectCode: null };
 }
 
 function toRecord(user, profile, subjects) {
@@ -138,12 +141,14 @@ async function requireAdminTarget(admin, schema, userId) {
 // ─── Validation ──────────────────────────────────────────────────────────────
 const clean = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max + 1);
 
+/** Administrators are always Subject Admins with exactly one valid subject. */
 function validateAssignment(input, subjects, errors) {
-  const adminType = input.adminType === 'institution' ? 'institution' : input.adminType === 'subject' ? 'subject' : null;
-  if (!adminType) errors.adminType = 'Choose Subject Admin or Institution Admin.';
-  const subjectCode = adminType === 'subject' ? clean(input.subjectCode, 16).toUpperCase() : null;
-  if (adminType === 'subject' && !subjects.some((s) => s.code === subjectCode)) errors.subjectCode = 'Choose a subject.';
-  return { adminType, subjectCode };
+  if (input.adminType !== undefined && input.adminType !== null && input.adminType !== 'subject') {
+    errors.adminType = 'Administrators are Subject Admins. Institution-wide administrators are not supported.';
+  }
+  const subjectCode = clean(input.subjectCode, 16).toUpperCase();
+  if (!subjects.some((s) => s.code === subjectCode)) errors.subjectCode = 'Choose a subject.';
+  return { adminType: 'subject', subjectCode };
 }
 
 export function validateAdminInput(input, subjects) {
@@ -209,7 +214,7 @@ async function createAdmin(admin, ctx, callerUser, input, log) {
   if (await findAuthUserByEmail(admin, value.email) || (await findProfilesBy(admin, ctx.schema, 'email', value.email)).length) {
     throw new HttpError(409, `${value.email} is already used by another account.`, { email: 'This email is already used.' });
   }
-  if (value.adminType === 'subject' && value.status === 'Active') assertSubjectFree(records, value.subjectCode, null);
+  if (value.status === 'Active') assertSubjectFree(records, value.subjectCode, null);
 
   const temporaryPassword = generateTemporaryPassword();
   const { data, error } = await admin.auth.admin.createUser({
@@ -222,8 +227,8 @@ async function createAdmin(admin, ctx, callerUser, input, log) {
       role: 'admin',
       staff_id: value.adminId,
       full_name: value.name,
-      admin_type: value.adminType,
-      ...(value.subjectCode ? { subject_code: value.subjectCode } : {}),
+      admin_type: 'subject',
+      subject_code: value.subjectCode,
       must_change_password: true,
       created_by: callerUser.id,
       ...(ctx.institutionId ? { institution_id: ctx.institutionId } : {}),
@@ -236,6 +241,7 @@ async function createAdmin(admin, ctx, callerUser, input, log) {
   }
   const userId = data.user.id;
   try {
+    // Writes the full profile (the signup trigger may not have created it yet).
     await upsertProfileRow(admin, ctx.schema, userId, {
       full_name: value.name, role: 'admin', staff_id: value.adminId, email: value.email, usn: null,
       ...(ctx.institutionId ? { institution_id: ctx.institutionId } : {}),
@@ -262,10 +268,10 @@ async function assignSubject(admin, ctx, callerUser, input, log) {
   if (Object.keys(errors).length) throw new HttpError(422, 'Please correct the highlighted fields.', errors);
   const { records } = await adminRecords(admin, ctx);
   const current = records.find((r) => r.id === user.id);
-  if (adminType === 'subject' && current?.status === 'Active') assertSubjectFree(records, subjectCode, user.id);
+  if (current?.status === 'Active') assertSubjectFree(records, subjectCode, user.id);
   const { subject_code: _drop, ...rest } = user.app_metadata || {};
   const { error } = await admin.auth.admin.updateUserById(user.id, {
-    app_metadata: { ...rest, role: 'admin', staff_id: current?.adminId || rest.staff_id, admin_type: adminType, ...(subjectCode ? { subject_code: subjectCode } : {}) },
+    app_metadata: { ...rest, role: 'admin', staff_id: current?.adminId || rest.staff_id, admin_type: adminType, subject_code: subjectCode },
   });
   if (error) throw new Error(`updateUserById failed: ${error.message}`);
   await syncSubjectAdmins(admin, ctx, user.id, adminType, subjectCode);

@@ -35,10 +35,16 @@ export function ScopeDenied({ examCode, scope, homePath = '/admin' }) {
           <ShieldAlert className="h-5 w-5" aria-hidden="true" />
         </span>
         <h1 className="text-lg font-semibold text-slate-900">Access restricted</h1>
-        <p className="mt-2 text-sm leading-relaxed text-slate-600">
-          Examination <span className="font-mono">{examCode || '—'}</span> is outside your assigned subject
-          {scope?.label ? <> ({scope.label})</> : null}.
-        </p>
+        {scope?.scoped && !scope.subjectCodes?.length ? (
+          <p className="mt-2 text-sm leading-relaxed text-slate-600">
+            No subject is assigned to your account yet. Ask the super administrator to assign one in Admin Management.
+          </p>
+        ) : (
+          <p className="mt-2 text-sm leading-relaxed text-slate-600">
+            Examination <span className="font-mono">{examCode || '—'}</span> is outside your assigned subject
+            {scope?.label ? <> ({scope.label})</> : null}.
+          </p>
+        )}
         <Link to={homePath} className="mt-6 inline-flex h-9 items-center rounded-sm bg-[#1E3A5F] px-4 text-xs font-semibold text-white hover:bg-[#152A45]">
           Go to my dashboard
         </Link>

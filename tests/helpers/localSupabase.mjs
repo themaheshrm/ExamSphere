@@ -76,7 +76,14 @@ export async function startLocalSupabase({ port = 0, database = 'examsphere_e2e'
     functions,
     rest: createPgRest(pool),
     hooks: {
-      created: (u) => sql('INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data) VALUES ($1, $2, $3, $4)', [u.id, u.email, u.app_metadata || {}, u.user_metadata || {}]),
+      // Like Supabase Auth's admin createUser(): the row is INSERTed with only
+      // the provider metadata, and the caller's app_metadata is written by a
+      // second statement (this is what the signup triggers must cope with).
+      created: async (u) => {
+        await sql('INSERT INTO auth.users (id, email, raw_app_meta_data, raw_user_meta_data) VALUES ($1, $2, $3, $4)',
+          [u.id, u.email, { provider: 'email', providers: ['email'] }, u.user_metadata || {}]);
+        await sql('UPDATE auth.users SET raw_app_meta_data = $2 WHERE id = $1', [u.id, { provider: 'email', providers: ['email'], ...(u.app_metadata || {}) }]);
+      },
       updated: (u) => sql('UPDATE auth.users SET raw_app_meta_data = $2 WHERE id = $1', [u.id, u.app_metadata || {}]),
       deleted: (u) => sql('DELETE FROM auth.users WHERE id = $1', [u.id]),
     },

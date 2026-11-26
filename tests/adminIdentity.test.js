@@ -52,15 +52,18 @@ test('conflicting subject-admin identities are denied, not guessed', () => {
   assert.deepEqual(scope.subjectCodes, []);
 });
 
-test('institution admin and super admin keep full access on the live schema', () => {
-  const inst = buildUserObject(authUser('admin@drait.edu.in'), liveProfile({ full_name: 'Dr. Ramesh B.' }), 'admin',
+test('three roles: an administrator without a subject has no access; the super admin keeps full access', () => {
+  const unassigned = buildUserObject(authUser('admin@drait.edu.in'), liveProfile({ full_name: 'Dr. Ramesh B.' }), 'admin',
     token({ sub: 'u1', email: 'admin@drait.edu.in', app_metadata: {} }));
-  assert.equal(getAdminScope(inst).scoped, false);
-  assert.equal(getAdminScope(inst).canManageInstitution, true);
+  assert.equal(getAdminScope(unassigned).scoped, true);
+  assert.deepEqual(getAdminScope(unassigned).subjectCodes, []);
+  assert.equal(getAdminScope(unassigned).label, 'No subject assigned');
+  assert.equal(getAdminScope(unassigned).canManageInstitution, false);
   const withStaff = buildUserObject(authUser('admin@drait.edu.in'), liveProfile({ staff_id: 'ADM-8942' }), 'admin');
-  assert.equal(getAdminScope(withStaff).scoped, false);
+  assert.deepEqual(getAdminScope(withStaff).subjectCodes, [], 'a staff ID alone grants nothing');
   const root = buildUserObject(authUser('root@examsphere.io'), liveProfile({ role: 'super_admin' }), 'super-admin', token({ email: 'root@examsphere.io' }));
   assert.equal(getAdminScope(root).scoped, false);
+  assert.equal(getAdminScope(root).canManageInstitution, true);
 });
 
 test('students are never given admin scope', () => {
@@ -73,10 +76,10 @@ test('signed super-admin assignment (app_metadata.subject_code / admin_type) is 
   const t = (md, email = 'admin006@drait.edu.in', role = 'admin') => buildUserObject(authUser(email), liveProfile({ role: role === 'admin' ? 'admin' : 'super_admin' }), role, token({ sub: 'u1', email, app_metadata: md }));
   assert.deepEqual(getAdminScope(t({ staff_id: 'ADMIN006', admin_type: 'subject', subject_code: '22CS304' })).subjectCodes, ['22CS304'], 'new subject admin restricted');
   assert.deepEqual(getAdminScope(t({ staff_id: 'ADMIN001', subject_code: '22CS402' }, 'admin001@drait.edu.in')).subjectCodes, ['22CS402'], 'reassigned demo admin follows the server');
-  assert.equal(getAdminScope(t({ staff_id: 'ADMIN001', admin_type: 'institution' }, 'admin001@drait.edu.in')).scoped, false, 'converted to institution admin by the super admin');
+  assert.deepEqual(getAdminScope(t({ staff_id: 'ADMIN001', admin_type: 'institution' }, 'admin001@drait.edu.in')).subjectCodes, ['22CS302'], 'legacy institution type grants nothing extra');
   assert.deepEqual(getAdminScope(t({ staff_id: 'X', subject_code: 'NOPE' })).subjectCodes, [], 'unknown subject denies');
   assert.deepEqual(getAdminScope(t({ staff_id: 'X', admin_type: 'subject' })).subjectCodes, [], 'subject admin without subject denies');
-  assert.equal(getAdminScope(t({ staff_id: 'ADM-1', admin_type: 'institution' })).scoped, false);
+  assert.deepEqual(getAdminScope(t({ staff_id: 'ADM-1', admin_type: 'institution' })).subjectCodes, [], 'legacy institution-type admin has no access');
   // the stored session user cannot inject a subject or institution type: signals come from the token only
   const stored = buildUserObject({ id: 'u1', email: 'admin006@drait.edu.in', app_metadata: { admin_type: 'institution' } }, liveProfile(), 'admin', token({ sub: 'u1', email: 'admin006@drait.edu.in', app_metadata: { subject_code: '22CS304' } }));
   assert.deepEqual(getAdminScope(stored).subjectCodes, ['22CS304']);

@@ -21,7 +21,7 @@ test('API errors: network failures are retryable, expired sessions are recognise
   assert.equal(server.message, 'This attempt has already been submitted.');
 });
 
-test('ADMIN001–005 map to exactly one subject each (UI scope; the database enforces it independently)', () => {
+test('ADMIN001–005 map to exactly one subject each; admins without a subject get none (UI scope; the database enforces it independently)', () => {
   const expected = { ADMIN001: '22CS302', ADMIN002: '22CS402', ADMIN003: '22CS403', ADMIN004: '22CS502', ADMIN005: '22CS304' };
   for (const a of DEMO_ADMINS) {
     const scope = getAdminScope({ id: a.staffId, role: 'admin', staffId: a.staffId });
@@ -30,7 +30,7 @@ test('ADMIN001–005 map to exactly one subject each (UI scope; the database enf
     assert.ok(subjectByCode(expected[a.staffId]));
     assert.equal(canAccessExam(scope, '22CS601'), false);
   }
-  assert.equal(getAdminScope({ role: 'admin', staffId: 'ADM-8942' }).scoped, false);
+  assert.deepEqual(getAdminScope({ role: 'admin', staffId: 'ADM-8942' }).subjectCodes, [], 'no institution-wide administrator');
   assert.equal(getAdminScope({ role: 'super-admin' }).scoped, false);
 });
 
