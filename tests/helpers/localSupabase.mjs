@@ -41,7 +41,12 @@ function shimFile() {
   return file;
 }
 
-export async function buildDatabase(database) {
+/**
+ * `baseline: 'live'` starts from a replica of the live project's legacy schema
+ * (supabase/tests/fixtures/live_baseline_2026_11.sql) instead of an empty
+ * database, then applies 002–013 exactly as they will be applied there.
+ */
+export async function buildDatabase(database, { baseline = process.env.EXAMSPHERE_BASELINE || 'fresh' } = {}) {
   const admin = new pg.Client({ database: 'postgres', user: process.env.PGUSER || 'postgres' });
   await admin.connect();
   await admin.query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, [database]);
@@ -49,7 +54,9 @@ export async function buildDatabase(database) {
   await admin.query(`CREATE DATABASE ${database}`);
   await admin.end();
   psql(database, shimFile());
-  const migrations = readdirSync(path.join(ROOT, 'supabase/migrations')).filter((f) => f.endsWith('.sql')).sort();
+  if (baseline === 'live') psql(database, path.join(ROOT, 'supabase/tests/fixtures/live_baseline_2026_11.sql'));
+  const migrations = readdirSync(path.join(ROOT, 'supabase/migrations')).filter((f) => f.endsWith('.sql'))
+    .filter((f) => baseline !== 'live' || !f.startsWith('001_')).sort();
   for (const f of migrations) psql(database, path.join(ROOT, 'supabase/migrations', f));
   psql(database, path.join(ROOT, 'supabase/seed/001_drait_catalogue.sql'));
   // Re-run 013 now that the institution exists (creates the demo pattern pins).

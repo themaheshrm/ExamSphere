@@ -2,7 +2,7 @@
 
 The question bank, examinations, patterns A–J, candidate assignments, attempts, answers, grading, results, notifications and platform settings now live in Supabase. The browser keeps no exam business data.
 
-> **Status:** the code is ready, but **nothing has been applied to the live project.** The new frontend needs migrations **003–013** and the catalogue seed. Until they are applied, the exam pages show "Could not load…" errors. **Apply the database first (§3), then deploy the frontend.**
+> **Status:** the code is ready, but **nothing has been applied to the live project.** The new frontend needs migrations **002–013** and the catalogue seed. Until they are applied, the exam pages show "Could not load…" errors. **Apply the database first (§3), then deploy the frontend.**
 
 ## 1. What changed
 
@@ -51,19 +51,54 @@ Run these yourself. Set the connection string in your own shell: it is the datab
    supabase db dump --db-url "$SUPABASE_DB_URL" --data-only -f backup_data.sql
    ```
 
-2. **Migrations 003–013 and the seed.** Apply them in order, stopping at the first error.
+2. **What discovery found (2026-11-26).** The live project runs PostgreSQL 17.12. It has an older, empty exam schema (`exams`, `questions`, `question_keys`, `exam_attempts`, `answers`, `results`, and the enums `exam_status` and `attempt_status` with different labels). It also has one placeholder institution, "Apex Engineering University" (`APEX-01`), and 3 accounts. Migration **002** reconciles this:
+   - It **renames** the empty legacy tables and enums to `legacy_*`. Nothing is dropped.
+   - It refuses to run if any of those tables has rows.
+   - It adds the missing `institutions` columns and maps `is_suspended` to `is_active`.
 
-   ```bash
-   for f in supabase/migrations/0{03,04,05,06,07,08,09,10,11,12,13}_*.sql supabase/seed/001_drait_catalogue.sql; do echo "== $f"; psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -1 -f "$f" || break; done
+   The whole sequence below is rehearsed on an exact replica of the live schema by `supabase/tests/run_live_upgrade.sh`, which CI runs too.
+
+3. **Apply in this exact order**, one file at a time, checking for errors after each:
+
+   | # | File | Notes |
+   |---|---|---|
+   | 1 | `supabase/migrations/002_reconcile_legacy_schema.sql` | Renames the empty legacy schema. |
+   | 2–12 | `supabase/migrations/003_…` through `013_…` | In numeric order. |
+   | 13 | `supabase/seed/000_adopt_live_institution_as_drait.sql` | **Optional, owner's decision.** Converts the APEX-01 row into Dr. AIT (`1DA`), so the existing admin and student belong to Dr. AIT. Skip it to keep Apex as a separate institution. |
+   | 14 | `supabase/seed/001_drait_catalogue.sql` | Dr. AIT, CS department, 6 subjects, 150 questions. |
+   | 15 | `supabase/migrations/013_examination_engine_integration.sql` | **Again**, to create the demo pattern pins. |
+
+   **Supabase SQL Editor (no install):** open each file, copy all of it into a new query, and press Run. Continue only when it reports **Success**. If a file errors, stop and share the message. Nothing after the failing file has run, and the failed file itself rolled back.
+
+   **psql** (PowerShell, from the repository root):
+
+   ```powershell
+   foreach ($f in @('supabase/migrations/002_reconcile_legacy_schema.sql') + (Get-ChildItem supabase/migrations/0*.sql | Where-Object Name -match '^(00[3-9]|01[0-3])_' | Sort-Object Name | ForEach-Object { $_.FullName })) { Write-Host "== $f"; psql $env:SUPABASE_DB_URL -X -v ON_ERROR_STOP=1 -1 -f $f; if ($LASTEXITCODE -ne 0) { break } }
    ```
 
-   Then re-run 013 once. This creates the demo pattern pins, which need the institution row that the seed adds:
+   Then the optional adoption, the seed and 013 again. The seed files manage their own transaction, so they run without `-1`:
 
-   ```bash
-   psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -1 -f supabase/migrations/013_examination_engine_integration.sql
+   ```powershell
+   psql $env:SUPABASE_DB_URL -X -v ON_ERROR_STOP=1 -f supabase/seed/000_adopt_live_institution_as_drait.sql
    ```
 
-3. **Backfill existing accounts** if discovery shows profiles without an institution. Do this before 005 if it reports orphan `institution_id`s; see §8 step 4. Then check the demo accounts against the new schema with the read-only dry runs. Run the real provisioning only as described in `docs/DEMO_ADMINS.md` and `docs/DEMO_ACCOUNTS.md`.
+   ```powershell
+   psql $env:SUPABASE_DB_URL -X -v ON_ERROR_STOP=1 -f supabase/seed/001_drait_catalogue.sql
+   ```
+
+   ```powershell
+   psql $env:SUPABASE_DB_URL -X -v ON_ERROR_STOP=1 -1 -f supabase/migrations/013_examination_engine_integration.sql
+   ```
+
+   Finally, make the REST API see the new objects. Run this in the SQL Editor (or use Dashboard → Settings → API → Reload schema):
+
+   ```sql
+   NOTIFY pgrst, 'reload schema';
+   ```
+
+   Do **not** run `001_baseline_reconstruction.sql` on the live project. It is only for building fresh databases.
+
+   Then check the demo accounts against the new schema with the read-only dry runs. Run the real provisioning only as described in `docs/DEMO_ADMINS.md` and `docs/DEMO_ACCOUNTS.md`.
 
    ```bash
    node scripts/provision-demo-admins.mjs --dry-run
@@ -91,6 +126,10 @@ Run these yourself. Set the connection string in your own shell: it is the datab
 
 ```bash
 PGHOST=127.0.0.1 PGUSER=postgres bash supabase/tests/run_local.sh
+```
+
+```bash
+PGHOST=127.0.0.1 PGUSER=postgres bash supabase/tests/run_live_upgrade.sh
 ```
 
 ```bash
