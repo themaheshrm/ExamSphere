@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install psql
         run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-      - name: Replay migrations 001–013 and run supabase/tests
+      - name: Replay migrations 001–013 (fresh database) and run supabase/tests
         run: |
           bash supabase/tests/run_local.sh 2>&1 | tee db-tests.log
           grep -q "SUBJECT ADMIN SCOPE TEST COMPLETE" db-tests.log
@@ -66,6 +66,11 @@ jobs:
           grep -q "ENGINE INTEGRATION TEST COMPLETE" db-tests.log
           if grep -q "FAIL" db-tests.log; then echo "Database test failure"; exit 1; fi
           echo "PASS assertions: $(grep -c PASS db-tests.log)"
+      - name: Rehearse the live upgrade (replica of the live legacy schema → 002–013 → seed)
+        run: |
+          bash supabase/tests/run_live_upgrade.sh 2>&1 | tee live-upgrade.log
+          grep -q "LIVE UPGRADE TEST COMPLETE" live-upgrade.log
+          if grep -q "FAIL" live-upgrade.log; then echo "Live upgrade rehearsal failure"; exit 1; fi
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -77,4 +82,10 @@ jobs:
         env:
           PGUSER: postgres
           REQUIRE_DB: '1'
+        run: node --test tests/engine.integration.test.js
+      - name: Examination engine end-to-end on the upgraded live schema
+        env:
+          PGUSER: postgres
+          REQUIRE_DB: '1'
+          EXAMSPHERE_BASELINE: live
         run: node --test tests/engine.integration.test.js
