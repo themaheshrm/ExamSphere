@@ -28,10 +28,10 @@ DECLARE
 BEGIN
   -- Only accounts provisioned with a role and an institution get a profile
   -- here; anything else waits for its metadata (or for the provisioning code).
-  IF NOT (v_meta->>'role' IN ('student', 'admin'))
-     OR NULLIF(v_meta->>'institution_id', '') IS NULL THEN
-    RETURN;
-  END IF;
+  IF NOT COALESCE(v_meta->>'role' IN ('student', 'admin'), FALSE)
+   OR NULLIF(v_meta->>'institution_id', '') IS NULL THEN
+  RETURN;
+END IF;
 
   INSERT INTO public.profiles (id, email, full_name, role, institution_id, department_id, usn, staff_id)
   VALUES (
