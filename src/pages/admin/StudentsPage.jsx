@@ -55,8 +55,8 @@ function attemptOf(s) {
 
 function StudentsView({ exam, examCode, summaries, selectExam, scope }) {
   const { user } = useAuth();
-  // Subject-scoped admins view candidates of their examination; the roster
-  // itself (add / edit / eligibility) stays with the institution admin.
+  // Subject admins view candidates of their examination; the roster itself
+  // (add / edit / eligibility) is managed by the super admin.
   const canEditRoster = !scope.scoped;
   const { notify } = useToast();
   const { data, error, loading, reload } = useAsync(() => loadRoster(exam.id), [exam.id]);

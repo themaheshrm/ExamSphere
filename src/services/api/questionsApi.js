@@ -45,6 +45,8 @@ export const questionsApi = {
       difficulty: form.difficulty,
       marks: form.marks,
       negativeMarks: form.negativeMarks ?? 0,
+      // The super admin has no institution of their own; the server still checks access.
+      ...(form.institutionId ? { institutionId: form.institutionId } : {}),
     };
     return toQuestion(await rpc('save_question', { p_question_id: id, p_payload: payload }));
   },
@@ -55,9 +57,10 @@ export const questionsApi = {
   },
 
   /** Server-side validation + duplicate checks; returns { imported, rejected, rejections }. */
-  import(fileName, questions) {
+  import(fileName, questions, institutionId = null) {
     return rpc('import_questions', {
       p_file_name: fileName,
+      ...(institutionId ? { p_institution_id: institutionId } : {}),
       p_rows: questions.map((q, i) => ({
         rowNumber: q.rowNumber ?? i + 2, subject: q.subjectCode || q.subject, topic: q.topic, statement: q.statement,
         options: q.options, correctOption: q.correctOption, difficulty: q.difficulty, marks: q.marks, negativeMarks: q.negativeMarks ?? 0,

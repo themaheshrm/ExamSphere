@@ -61,8 +61,12 @@ SELECT test.ok((SELECT role = 'admin' AND usn IS NULL AND staff_id = 'ADM-8942' 
                 WHERE id = '00000000-0000-0000-0000-0000000000a1'), 'signup trigger maps app_metadata → admin profile');
 SELECT test.ok((SELECT usn FROM public.profiles WHERE id = '00000000-0000-0000-0000-000000000101') = '1DA22CS001',
                'USN canonicalised to upper case');
-SELECT test.fails($$INSERT INTO auth.users (email, raw_user_meta_data) VALUES ('self@signup.com', '{"role":"super_admin"}')$$,
-                  'self-signup without server metadata is rejected (no orphan student, no role escalation)');
+-- 014: a sign-up without server-set app_metadata gets NO profile (hence no role,
+-- institution or data access); disable "Allow new users to sign up" in Auth.
+INSERT INTO auth.users (id, email, raw_user_meta_data) VALUES ('00000000-0000-0000-0000-00000000ffff', 'self@signup.com', '{"role":"super_admin"}');
+SELECT test.ok(NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = '00000000-0000-0000-0000-00000000ffff'),
+               'self-signup without server metadata gets no profile (no orphan student, no role escalation)');
+DELETE FROM auth.users WHERE id = '00000000-0000-0000-0000-00000000ffff';
 
 -- ── ANON ─────────────────────────────────────────────────────────────────────
 SET ROLE anon;

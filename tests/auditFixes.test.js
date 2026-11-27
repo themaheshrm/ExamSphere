@@ -21,11 +21,11 @@ async function recoverySetup() {
   const mock = await startMockSupabase({
     serviceKey: SERVICE, functions,
     tables: { profiles: { columns: LIVE_PROFILE_COLUMNS, rows: [
-      { id: '00000000-0000-4000-8000-0000000000a0', full_name: 'Dr. Ramesh B.', role: 'admin', usn: null },
+      { id: '00000000-0000-4000-8000-0000000000a0', full_name: 'Platform Administrator', role: 'super_admin', usn: null },
       { id: '00000000-0000-4000-8000-0000000000e0', full_name: 'Student One', role: 'student', usn: '1DA22CS001' },
     ] } },
     users: [
-      { id: '00000000-0000-4000-8000-0000000000a0', email: 'admin@drait.edu.in', app_metadata: {}, password: PW },
+      { id: '00000000-0000-4000-8000-0000000000a0', email: 'superadmin@drait.edu.in', app_metadata: {}, password: PW },
       { id: '00000000-0000-4000-8000-0000000000e0', email: '1da22cs001@drait.edu.in', app_metadata: { role: 'student', usn: '1DA22CS001' }, password: PW },
     ],
   });
@@ -73,7 +73,7 @@ test('F1 server: a recovery-link session sets a new password (policy enforced); 
 test('F1 server: recovery also clears a temporary-password flag (no lock-out)', async () => {
   const t = await recoverySetup();
   try {
-    const adminTok = await t.signIn('admin@drait.edu.in', PW);
+    const adminTok = await t.signIn('superadmin@drait.edu.in', PW);
     const res = await fetch(`${t.mock.url}/functions/v1/create-student`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${adminTok}` }, body: JSON.stringify({ name: 'CS Demo 06', usn: 'CS006', mobile: '+91 90000 00006', semester: 6, section: 'D' }) });
     assert.equal(res.status, 200);
     assert.equal(t.mock.state.users.find((u) => u.email === 'cs006@drait.edu.in').app_metadata.must_change_password, true);

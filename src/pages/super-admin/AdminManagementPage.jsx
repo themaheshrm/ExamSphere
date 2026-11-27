@@ -20,8 +20,8 @@ import { useAsync } from '../../utils/useAsync';
 import { formatDateTime, formatRelative } from '../../utils/format';
 
 const selectCls = 'es-select h-9 w-full rounded-sm border border-slate-300 bg-white pl-3 text-sm focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F] disabled:bg-slate-100';
-const EMPTY = { name: '', adminId: '', email: '', adminType: 'subject', subjectCode: '', status: 'Active' };
-const TYPE_LABEL = { subject: 'Subject Admin', institution: 'Institution Admin' };
+const EMPTY = { name: '', adminId: '', email: '', subjectCode: '', status: 'Active' };
+const TYPE_LABEL = { subject: 'Subject Admin' };
 
 function Field({ id, label, required, error, children }) {
   return (
@@ -47,7 +47,7 @@ function SubjectSelect({ id, subjects, value, onChange, selfAdminId }) {
 }
 
 function SubjectActivity({ admin }) {
-  const subjectCode = admin.adminType === 'subject' ? admin.subjectCode : null;
+  const subjectCode = admin.subjectCode || null;
   const { data } = useAsync(async () => {
     if (!subjectCode) return null;
     const [exams, log] = await Promise.all([examsApi.list(), activityLogService.list({ limit: 200 })]);
@@ -86,7 +86,7 @@ export default function AdminManagementPage() {
   const [errors, setErrors] = useState({});
   const [busy, setBusy] = useState(false);
   const [managing, setManaging] = useState(null); // admin record
-  const [assign, setAssign] = useState({ adminType: 'subject', subjectCode: '' });
+  const [assign, setAssign] = useState({ subjectCode: '' });
   const [assignErrors, setAssignErrors] = useState({});
   const [confirm, setConfirm] = useState(null); // 'reset' | 'status'
   const [credentials, setCredentials] = useState(null); // { title, values } — memory only
@@ -120,7 +120,7 @@ export default function AdminManagementPage() {
 
   const openManage = (record) => {
     setManaging(record);
-    setAssign({ adminType: record.adminType, subjectCode: record.subjectCode || '' });
+    setAssign({ subjectCode: record.subjectCode || '' });
     setAssignErrors({});
   };
   const refreshManaged = async (id) => {
@@ -134,7 +134,7 @@ export default function AdminManagementPage() {
     setBusy(true);
     try {
       const { admin, credentials: issued } = await adminManagementService.create(form);
-      log('Created administrator', admin.adminId, `${TYPE_LABEL[admin.adminType]}${admin.subjectCode ? ` · ${admin.subjectCode}` : ''}`);
+      log('Created administrator', admin.adminId, `Subject Admin · ${admin.subjectCode}`);
       setAdding(false);
       setCredentials({ title: 'Administrator account created', values: issued });
       load();
@@ -148,8 +148,8 @@ export default function AdminManagementPage() {
   const saveAssignment = async () => {
     setBusy(true);
     try {
-      const { admin } = await adminManagementService.assignSubject(managing.id, assign.adminType, assign.adminType === 'subject' ? assign.subjectCode : null);
-      log('Changed administrator subject', admin.adminId, admin.subjectCode || 'Institution-wide');
+      const { admin } = await adminManagementService.assignSubject(managing.id, assign.subjectCode);
+      log('Changed administrator subject', admin.adminId || admin.email, admin.subjectCode);
       notify(`${admin.adminId || admin.email} updated.`);
       await refreshManaged(managing.id);
     } catch (error) {
@@ -229,10 +229,10 @@ export default function AdminManagementPage() {
                   <TableCell>
                     <p className="font-medium text-slate-900">{a.name}</p>
                     <p className="text-[11px] text-slate-500 lg:hidden">{a.email}</p>
-                    <p className="text-[11px] text-slate-500 sm:hidden">{a.subjectShort || TYPE_LABEL[a.adminType]}</p>
+                    <p className="text-[11px] text-slate-500 sm:hidden">{a.subjectShort || 'No subject assigned'}</p>
                   </TableCell>
                   <TableCell className="hidden lg:table-cell">{a.email}</TableCell>
-                  <TableCell className="hidden sm:table-cell">{a.adminType === 'subject' ? (a.subjectShort || '—') : <span className="text-slate-500">Institution-wide</span>}</TableCell>
+                  <TableCell className="hidden sm:table-cell">{a.subjectShort || <span className="text-amber-700">No subject assigned</span>}</TableCell>
                   <TableCell className="hidden font-mono md:table-cell">{a.subjectCode || '—'}</TableCell>
                   <TableCell><StatusBadge status={a.status} size="sm" /></TableCell>
                   <TableCell align="right"><Button size="sm" variant="secondary" onClick={() => openManage(a)} aria-label={`Manage ${a.adminId || a.email}`}>Manage</Button></TableCell>
@@ -261,18 +261,11 @@ export default function AdminManagementPage() {
           <InputField label="Full name" required value={form.name} onChange={(e) => setField('name', e.target.value)} error={errors.name} />
           <InputField label="Admin ID" required value={form.adminId} onChange={(e) => setField('adminId', e.target.value.toUpperCase())} error={errors.adminId} placeholder="ADMIN006" inputClassName="font-mono uppercase" />
           <InputField label="Email address" type="email" value={form.email} onChange={(e) => setField('email', e.target.value)} error={errors.email} helperText="Blank = adminid@drait.edu.in" />
-          <Field id="admin-type" label="Role" required error={errors.adminType}>
-            <select id="admin-type" className={selectCls} value={form.adminType} onChange={(e) => { setField('adminType', e.target.value); setField('subjectCode', form.subjectCode); }}>
-              <option value="subject">Subject Admin</option>
-              <option value="institution">Institution Admin</option>
-            </select>
+          <InputField label="Role" value="Subject Admin" disabled error={errors.adminType} />
+          <Field id="admin-subject" label="Subject" required error={errors.subjectCode}>
+            <SubjectSelect id="admin-subject" subjects={data.subjects} value={form.subjectCode} onChange={(v) => setField('subjectCode', v)} />
           </Field>
-          <Field id="admin-subject" label="Subject" required={form.adminType === 'subject'} error={errors.subjectCode}>
-            {form.adminType === 'subject'
-              ? <SubjectSelect id="admin-subject" subjects={data.subjects} value={form.subjectCode} onChange={(v) => setField('subjectCode', v)} />
-              : <select id="admin-subject" className={selectCls} disabled><option>All subjects</option></select>}
-          </Field>
-          <InputField label="Subject code" value={form.adminType === 'subject' ? form.subjectCode : '—'} disabled inputClassName="font-mono" />
+          <InputField label="Subject code" value={form.subjectCode || '—'} disabled inputClassName="font-mono" />
           <InputField label="Temporary password" value="Generated on create" disabled />
           <Field id="admin-status" label="Account status" required>
             <select id="admin-status" className={selectCls} value={form.status} onChange={(e) => setField('status', e.target.value)}>
@@ -295,7 +288,7 @@ export default function AdminManagementPage() {
         {managing && (
           <div className="space-y-6">
             <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-xs">
-              {[['Role', TYPE_LABEL[managing.adminType]], ['Status', <StatusBadge key="s" status={managing.status} size="sm" />],
+              {[['Role', TYPE_LABEL.subject], ['Status', <StatusBadge key="s" status={managing.status} size="sm" />],
                 ['Last sign-in', managing.lastSignInAt ? formatDateTime(managing.lastSignInAt) : 'Never'],
                 ['Password', managing.mustChangePassword ? 'Temporary (change required)' : 'Set by admin']].map(([k, v]) => (
                 <div key={k}><dt className="text-slate-500">{k}</dt><dd className="mt-0.5 font-medium text-slate-900">{v}</dd></div>
@@ -305,20 +298,13 @@ export default function AdminManagementPage() {
             <section>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Subject assignment</h3>
               {assignErrors.form && <Alert tone="danger" className="mb-3">{assignErrors.form}</Alert>}
-              <div className="grid gap-3 sm:grid-cols-[1fr_2fr_auto] sm:items-end">
-                <Field id="assign-type" label="Role">
-                  <select id="assign-type" className={selectCls} value={assign.adminType} onChange={(e) => { setAssign({ ...assign, adminType: e.target.value }); setAssignErrors({}); }}>
-                    <option value="subject">Subject Admin</option>
-                    <option value="institution">Institution Admin</option>
-                  </select>
-                </Field>
+              {!managing.subjectCode && <Alert tone="warning" className="mb-3">No subject assigned: this administrator cannot open any examination until one is assigned.</Alert>}
+              <div className="grid gap-3 sm:grid-cols-[2fr_auto] sm:items-end">
                 <Field id="assign-subject" label="Subject" error={assignErrors.subjectCode}>
-                  {assign.adminType === 'subject'
-                    ? <SubjectSelect id="assign-subject" subjects={data.subjects} value={assign.subjectCode} selfAdminId={managing.adminId || managing.email} onChange={(v) => { setAssign({ ...assign, subjectCode: v }); setAssignErrors({}); }} />
-                    : <select id="assign-subject" className={selectCls} disabled><option>All subjects</option></select>}
+                  <SubjectSelect id="assign-subject" subjects={data.subjects} value={assign.subjectCode} selfAdminId={managing.adminId || managing.email} onChange={(v) => { setAssign({ subjectCode: v }); setAssignErrors({}); }} />
                 </Field>
                 <Button onClick={saveAssignment} isLoading={busy}
-                  disabled={assign.adminType === managing.adminType && (assign.adminType === 'institution' || assign.subjectCode === managing.subjectCode)}>Save</Button>
+                  disabled={!assign.subjectCode || assign.subjectCode === managing.subjectCode}>Save</Button>
               </div>
             </section>
 

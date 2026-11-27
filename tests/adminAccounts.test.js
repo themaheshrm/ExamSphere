@@ -68,7 +68,7 @@ test('server catalogue and demo assignments match the app', () => {
   assert.deepEqual(DEMO_ADMIN_SUBJECTS, Object.fromEntries(DEMO_ADMINS.map((a) => [a.staffId, a.subjectCode])));
 });
 
-test('super admin lists all six admins from actual records (five subject admins + institution admin)', async () => {
+test('super admin lists all six admins from actual records (five subject admins + a legacy admin shown as "no subject")', async () => {
   for (const tables of [liveTables(), fullTables()]) {
     const t = await setup(tables);
     try {
@@ -78,6 +78,8 @@ test('super admin lists all six admins from actual records (five subject admins 
       assert.deepEqual(Object.keys(rows).sort(), ['ADM-8942', 'ADMIN001', 'ADMIN002', 'ADMIN003', 'ADMIN004', 'ADMIN005'].filter((k) => k !== 'ADM-8942' || tables.subjects).concat(tables.subjects ? [] : ['admin@drait.edu.in']).sort());
       assert.deepEqual([rows.ADMIN001.subjectCode, rows.ADMIN001.subjectShort, rows.ADMIN001.status, rows.ADMIN001.adminType], ['22CS302', 'DSA', 'Active', 'subject']);
       assert.equal(rows.ADMIN005.subjectTitle, 'Java Programming');
+      const legacy = rows['ADM-8942'] || rows['admin@drait.edu.in'];
+      assert.deepEqual([legacy.adminType, legacy.subjectCode], ['subject', null], 'legacy institution-wide admin kept, listed without a subject');
       assert.ok(!r.json.admins.some((a) => a.email === 'root@examsphere.io' || a.email === 'cs006@drait.edu.in'), 'super admin and students are not listed');
       assert.deepEqual(r.json.subjects.find((s) => s.code === '22CS402').assignedTo, ['ADMIN002']);
       assert.ok(!JSON.stringify(r.json).match(/password/i) || !JSON.stringify(r.json).includes(PW), 'no passwords in the listing');
@@ -85,7 +87,7 @@ test('super admin lists all six admins from actual records (five subject admins 
   }
 });
 
-test('only an active super admin may call manage-admins (institution admin, subject admin, student, anon, forged → refused)', async () => {
+test('only an active super admin may call manage-admins (legacy admin, subject admin, student, anon, forged → refused)', async () => {
   const t = await setup(liveTables());
   try {
     assert.equal((await t.call('manage-admins', null, { action: 'list' })).status, 401);
@@ -131,9 +133,9 @@ test('create: validates, generates email and one-time password, assigns subject;
     assert.equal(claims(await t.signIn('admin006@drait.edu.in', credentials.temporaryPassword)).app_metadata.subject_code, '22CS304');
 
     // duplicates
-    assert.equal((await t.call('manage-admins', token, { action: 'create', ...NEW_ADMIN, adminType: 'institution' })).status, 409, 'Admin ID taken');
-    assert.equal((await t.call('manage-admins', token, { action: 'create', ...NEW_ADMIN, adminId: 'ADMIN007', email: 'admin006@drait.edu.in', adminType: 'institution' })).status, 422, 'custom email refused on live schema');
-    const dupId = await t.call('manage-admins', token, { action: 'create', ...NEW_ADMIN, adminId: 'ADMIN001', adminType: 'institution' });
+    assert.equal((await t.call('manage-admins', token, { action: 'create', ...NEW_ADMIN })).status, 409, 'Admin ID taken');
+    assert.equal((await t.call('manage-admins', token, { action: 'create', ...NEW_ADMIN, adminId: 'ADMIN007', email: 'admin006@drait.edu.in' })).status, 422, 'custom email refused on live schema');
+    const dupId = await t.call('manage-admins', token, { action: 'create', ...NEW_ADMIN, adminId: 'ADMIN001' });
     assert.equal(dupId.status, 409, 'existing demo Admin ID (from app_metadata, no staff_id column)');
   } finally { await t.close(); }
 });
@@ -149,11 +151,17 @@ test('reactivation is refused while the subject is held; reassignment conflicts 
     assert.match(react.json.error, /22CS304 is already assigned to ADMIN006/);
     const clash = await t.call('manage-admins', token, { action: 'assign-subject', userId: '00000000-0000-4000-8000-0000000000a1', adminType: 'subject', subjectCode: '22CS402' });
     assert.equal(clash.status, 409);
-    // move ADMIN005 to institution-wide, then it can be activated
+    // institution-wide administrators no longer exist: the conversion is refused and nothing changes
     const inst = await t.call('manage-admins', token, { action: 'assign-subject', userId: '00000000-0000-4000-8000-0000000000a5', adminType: 'institution' });
-    assert.equal(inst.status, 200);
-    assert.equal(inst.json.admin.adminType, 'institution');
-    assert.equal(t.mock.state.users.find((u) => u.id === '00000000-0000-4000-8000-0000000000a5').app_metadata.subject_code, undefined);
+    assert.equal(inst.status, 422);
+    assert.match(inst.json.fieldErrors.adminType, /Subject Admins/);
+    assert.equal(t.mock.state.users.find((u) => u.id === '00000000-0000-4000-8000-0000000000a5').app_metadata.subject_code, '22CS304');
+    // a subject is required; move ADMIN005 to a free subject (CN, after deactivating ADMIN004), then it can be activated
+    assert.equal((await t.call('manage-admins', token, { action: 'assign-subject', userId: '00000000-0000-4000-8000-0000000000a5', adminType: 'subject' })).status, 422, 'subject required');
+    await t.call('manage-admins', token, { action: 'set-status', userId: '00000000-0000-4000-8000-0000000000a4', status: 'Inactive' });
+    const moved = await t.call('manage-admins', token, { action: 'assign-subject', userId: '00000000-0000-4000-8000-0000000000a5', adminType: 'subject', subjectCode: '22CS502' });
+    assert.equal(moved.status, 200, JSON.stringify(moved.json));
+    assert.deepEqual([moved.json.admin.adminType, moved.json.admin.subjectCode], ['subject', '22CS502']);
     assert.equal((await t.call('manage-admins', token, { action: 'set-status', userId: '00000000-0000-4000-8000-0000000000a5', status: 'Active' })).status, 200);
   } finally { await t.close(); }
 });
@@ -174,8 +182,8 @@ test('full schema: create and reassignment keep subject_admins in sync; staff_id
     await t.call('manage-admins', token, { action: 'set-status', userId: '00000000-0000-4000-8000-0000000000a4', status: 'Inactive' });
     await t.call('manage-admins', token, { action: 'assign-subject', userId: id, adminType: 'subject', subjectCode: '22CS502' });
     assert.deepEqual(subjectOf(id), ['22CS502']);
-    await t.call('manage-admins', token, { action: 'assign-subject', userId: id, adminType: 'institution' });
-    assert.deepEqual(subjectOf(id), []);
+    assert.equal((await t.call('manage-admins', token, { action: 'assign-subject', userId: id, adminType: 'institution' })).status, 422, 'no institution-wide conversion');
+    assert.deepEqual(subjectOf(id), ['22CS502'], 'assignment unchanged');
   } finally { await t.close(); }
 });
 
@@ -208,7 +216,7 @@ test('deactivated admins cannot sign in; super admin and students cannot be targ
     await t.call('manage-admins', token, { action: 'set-status', userId: '00000000-0000-4000-8000-0000000000a4', status: 'Active' });
     assert.ok(await t.signIn('admin004@drait.edu.in'));
     for (const userId of ['00000000-0000-4000-8000-0000000000f0', '00000000-0000-4000-8000-0000000000e0', '00000000-0000-4000-8000-0000000000dd']) {
-      for (const body of [{ action: 'reset-password', userId }, { action: 'set-status', userId, status: 'Inactive' }, { action: 'assign-subject', userId, adminType: 'institution' }]) {
+      for (const body of [{ action: 'reset-password', userId }, { action: 'set-status', userId, status: 'Inactive' }, { action: 'assign-subject', userId, adminType: 'subject', subjectCode: '22CS302' }]) {
         assert.equal((await t.call('manage-admins', token, body)).status, 404, `${userId} ${body.action}`);
       }
     }
@@ -217,15 +225,20 @@ test('deactivated admins cannot sign in; super admin and students cannot be targ
   } finally { await t.close(); }
 });
 
-test('a new subject admin (signed subject_code) cannot create students; an institution-type admin can', async () => {
+test('three roles: Institution Admin cannot be created; subject admins cannot create students; the super admin can', async () => {
   const t = await setup(liveTables());
   try {
     const token = await t.root();
     await t.call('manage-admins', token, { action: 'set-status', userId: '00000000-0000-4000-8000-0000000000a5', status: 'Inactive' });
+    const inst = await t.call('manage-admins', token, { action: 'create', ...NEW_ADMIN, adminId: 'ADMIN010', adminType: 'institution' });
+    assert.equal(inst.status, 422, 'institution-wide administrator refused');
+    assert.ok(!t.mock.state.users.some((u) => u.email === 'admin010@drait.edu.in'), 'nothing created');
+    const noSubject = await t.call('manage-admins', token, { action: 'create', ...NEW_ADMIN, adminId: 'ADMIN011', subjectCode: '' });
+    assert.equal(noSubject.status, 422);
+    assert.ok(noSubject.json.fieldErrors.subjectCode);
     const sub = (await t.call('manage-admins', token, { action: 'create', ...NEW_ADMIN })).json.credentials;
-    const inst = (await t.call('manage-admins', token, { action: 'create', ...NEW_ADMIN, adminId: 'ADMIN010', adminType: 'institution' })).json.credentials;
     const student = { name: 'New Student', usn: '1DA22CS501', mobile: '+91 90000 00001', semester: 5, section: 'A' };
     assert.equal((await t.call('create-student', await t.signIn(sub.email, sub.temporaryPassword), student)).status, 403);
-    assert.equal((await t.call('create-student', await t.signIn(inst.email, inst.temporaryPassword), student)).status, 200);
+    assert.equal((await t.call('create-student', token, student)).status, 200);
   } finally { await t.close(); }
 });

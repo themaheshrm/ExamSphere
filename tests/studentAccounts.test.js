@@ -96,10 +96,10 @@ test('input validation: institutional email generated; role and other fields ign
   assert.deepEqual(Object.keys(bad.errors).sort(), ['email', 'mobile', 'name', 'section', 'semester', 'usn']);
 });
 
-test('live schema: institution admin creates CS006 → student role, flag set, one-time password, nothing sensitive stored', async () => {
+test('live schema: super admin creates CS006 → student role, flag set, one-time password, nothing sensitive stored', async () => {
   const t = await setup(liveTables());
   try {
-    const { token } = await t.signIn('admin@drait.edu.in');
+    const { token } = await t.signIn('root@examsphere.io');
     const r = await t.call('create-student', token, { ...CS006, role: 'admin' });
     assert.equal(r.status, 200, JSON.stringify(r.json));
     assert.equal(r.headers.get('cache-control'), 'no-store');
@@ -128,7 +128,7 @@ test('live schema: institution admin creates CS006 → student role, flag set, o
 test('full schema: email, institution, department and student_details (with phone) are written', async () => {
   const t = await setup(fullTables());
   try {
-    const { token } = await t.signIn('admin@drait.edu.in');
+    const { token } = await t.signIn('root@examsphere.io');
     const r = await t.call('create-student', token, { ...CS006, usn: '1DA22CS042', name: 'Asha Rao' });
     assert.equal(r.status, 200, JSON.stringify(r.json));
     const id = r.json.student.id;
@@ -141,13 +141,13 @@ test('full schema: email, institution, department and student_details (with phon
   } finally { await t.close(); }
 });
 
-test('authorisation: anonymous, invalid token, student, subject admin and inactive admin are refused; super admin allowed', async () => {
+test('authorisation: anonymous, invalid token, student, any administrator (incl. a legacy admin without a subject) and inactive admin are refused; super admin allowed', async () => {
   const t = await setup(fullTables());
   try {
     assert.equal((await t.call('create-student', null, CS006)).status, 401);
     assert.equal((await t.call('create-student', 'forged.token.value', CS006)).status, 401);
     assert.equal((await t.call('create-student', ANON_KEY, CS006)).status, 401, 'anon key is not a session');
-    for (const email of ['1da22cs001@drait.edu.in', 'admin001@drait.edu.in', 'former@drait.edu.in']) {
+    for (const email of ['1da22cs001@drait.edu.in', 'admin001@drait.edu.in', 'admin@drait.edu.in', 'former@drait.edu.in']) {
       const { token } = await t.signIn(email);
       const r = await t.call('create-student', token, CS006);
       assert.equal(r.status, 403, `${email}: ${JSON.stringify(r.json)}`);
@@ -175,7 +175,7 @@ test('subject admin listed in subject_admins (not a demo ID) is refused', async 
 test('duplicates: existing USN, existing email and a second CS006 are rejected; existing accounts untouched', async () => {
   const t = await setup(liveTables());
   try {
-    const { token } = await t.signIn('admin@drait.edu.in');
+    const { token } = await t.signIn('root@examsphere.io');
     const before = structuredClone(t.mock.state.users);
     const dupUsn = await t.call('create-student', token, { ...CS006, usn: '1da22cs001' });
     assert.equal(dupUsn.status, 409);
@@ -194,7 +194,7 @@ test('duplicates: existing USN, existing email and a second CS006 are rejected; 
 test('full schema: an email already on a profile is a duplicate', async () => {
   const t = await setup(fullTables());
   try {
-    const { token } = await t.signIn('admin@drait.edu.in');
+    const { token } = await t.signIn('root@examsphere.io');
     t.mock.state.tables.profiles.rows.push({ id: 'p-x', full_name: 'X', role: 'student', usn: '1DA22CS777', email: 'asha.rao@drait.edu.in' });
     const r = await t.call('create-student', token, { ...CS006, usn: '1DA22CS043', email: 'asha.rao@drait.edu.in' });
     assert.equal(r.status, 409);
@@ -207,7 +207,7 @@ test('failure after the Auth user is created rolls it back', async () => {
   tables.student_details.columns = ['profile_id', 'institution_id', 'semester']; // phone/section missing → write fails
   const t = await setup(tables);
   try {
-    const { token } = await t.signIn('admin@drait.edu.in');
+    const { token } = await t.signIn('root@examsphere.io');
     const r = await t.call('create-student', token, CS006);
     assert.equal(r.status, 500);
     assert.match(r.json.error, /Nothing was saved/);
@@ -219,7 +219,7 @@ test('failure after the Auth user is created rolls it back', async () => {
 test('validation errors, bad JSON, oversized body and wrong method', async () => {
   const t = await setup(liveTables());
   try {
-    const { token } = await t.signIn('admin@drait.edu.in');
+    const { token } = await t.signIn('root@examsphere.io');
     const r = await t.call('create-student', token, { name: '', usn: 'nope' });
     assert.equal(r.status, 422);
     assert.ok(r.json.fieldErrors.usn && r.json.fieldErrors.name && r.json.fieldErrors.mobile);
@@ -233,7 +233,7 @@ test('validation errors, bad JSON, oversized body and wrong method', async () =>
 test('first-login password change: wrong/weak refused; success sets the new password and clears the flag', async () => {
   const t = await setup(liveTables());
   try {
-    const { token: adminToken } = await t.signIn('admin@drait.edu.in');
+    const { token: adminToken } = await t.signIn('root@examsphere.io');
     const { credentials } = (await t.call('create-student', adminToken, CS006)).json;
     const { token } = await t.signIn('cs006@drait.edu.in', credentials.temporaryPassword);
     assert.equal(JSON.parse(Buffer.from(token.split('.')[1], 'base64url')).app_metadata.must_change_password, true, 'flag in the signed token');
@@ -262,10 +262,10 @@ test('first-login password change: wrong/weak refused; success sets the new pass
 test('a user can only change their own password (token decides the account)', async () => {
   const t = await setup(liveTables());
   try {
-    const { token: adminToken } = await t.signIn('admin@drait.edu.in');
+    const { token: adminToken } = await t.signIn('root@examsphere.io');
     await t.call('create-student', adminToken, CS006);
     const r = await t.call('change-temporary-password', adminToken, { currentPassword: PW, newPassword: 'Hijack#Attempt2026', userId: 'whatever' });
     assert.equal(r.status, 409, 'admin has no temporary password; body cannot target another user');
-    assert.equal(t.mock.state.users.find((u) => u.email === 'admin@drait.edu.in').password, PW);
+    assert.equal(t.mock.state.users.find((u) => u.email === 'root@examsphere.io').password, PW);
   } finally { await t.close(); }
 });

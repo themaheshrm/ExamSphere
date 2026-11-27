@@ -11,9 +11,10 @@ export const adminManagementService = {
   list: () => invokeFunction('manage-admins', { action: 'list' }),
   create: (form) => invokeFunction('manage-admins', {
     action: 'create', name: form.name, adminId: form.adminId, email: form.email,
-    adminType: form.adminType, subjectCode: form.adminType === 'subject' ? form.subjectCode : null, status: form.status,
+    adminType: 'subject', subjectCode: form.subjectCode, status: form.status,
   }),
-  assignSubject: (userId, adminType, subjectCode) => invokeFunction('manage-admins', { action: 'assign-subject', userId, adminType, subjectCode }),
+  /** Every administrator is a Subject Admin with exactly one subject. */
+  assignSubject: (userId, subjectCode) => invokeFunction('manage-admins', { action: 'assign-subject', userId, adminType: 'subject', subjectCode }),
   resetPassword: (userId) => invokeFunction('manage-admins', { action: 'reset-password', userId }),
   setStatus: (userId, status) => invokeFunction('manage-admins', { action: 'set-status', userId, status }),
 };

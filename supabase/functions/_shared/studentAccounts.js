@@ -132,7 +132,11 @@ export async function tableExists(admin, table, column) {
   throw new Error(`Could not inspect ${table}: ${error.message}`);
 }
 
-/** Resolve and authorise the caller from their (server-verified) Auth user. */
+/**
+ * Resolve and authorise the caller from their (server-verified) Auth user.
+ * Roles: Super Admin, Subject Admin, Student. Only the active Super Admin
+ * manages the student roster; Subject Admins (role 'admin') are refused.
+ */
 export async function authorizeCaller(admin, schema, callerUser) {
   const profile = await getProfileById(admin, schema, callerUser.id);
   if (!profile || !['admin', 'super_admin'].includes(profile.role)) {
@@ -141,23 +145,8 @@ export async function authorizeCaller(admin, schema, callerUser) {
   if (schema.has('is_active') && profile.is_active === false) {
     throw new HttpError(403, 'This administrator account is inactive.');
   }
-  // Subject administrators manage one subject; the student roster stays with the institution admin.
-  const staffIds = [profile.staff_id, callerUser.app_metadata?.staff_id].filter(Boolean).map((s) => String(s).toUpperCase());
-  const email = String(callerUser.email || '').toLowerCase();
-  const md = callerUser.app_metadata || {};
-  // Signed, server-managed assignment (manage-admins) wins; otherwise the demo registry applies.
-  const signedScoped = Boolean(md.subject_code) || md.admin_type === 'subject';
-  const signedInstitution = md.admin_type === 'institution' && !md.subject_code;
-  const demoScoped = !signedInstitution && (staffIds.some((s) => DEMO_ADMIN_IDS.includes(s))
-    || DEMO_ADMIN_IDS.some((id) => email === `${id.toLowerCase()}@${EMAIL_DOMAIN}`));
-  let tableScoped = false;
-  if (await tableExists(admin, 'subject_admins', 'admin_id')) {
-    const { data, error } = await admin.from('subject_admins').select('admin_id').eq('admin_id', callerUser.id).limit(1);
-    if (error) throw new Error(`Could not read subject_admins: ${error.message}`);
-    tableScoped = (data || []).length > 0;
-  }
-  if (profile.role === 'admin' && (signedScoped || demoScoped || tableScoped)) {
-    throw new HttpError(403, 'Subject administrators cannot create student accounts. Ask the institution administrator.');
+  if (profile.role !== 'super_admin') {
+    throw new HttpError(403, 'Subject administrators cannot create student accounts. Ask the super administrator.');
   }
   return profile;
 }
@@ -172,7 +161,7 @@ async function departmentIdFor(admin, institutionId, name) {
 
 export async function createStudentAccount({ admin, callerUser, input, log = () => {} }) {
   const schema = await detectProfileSchema(admin, { required: ['usn'], optional: ['is_active', 'department_id'] });
-  const caller = await authorizeCaller(admin, schema, callerUser);
+  await authorizeCaller(admin, schema, callerUser);
 
   const { errors, value } = validateStudentInput(input);
   if (value.emailProvided && value.email !== institutionalEmailFor(value.usn) && !schema.has('email')) {
@@ -180,9 +169,9 @@ export async function createStudentAccount({ admin, callerUser, input, log = () 
   }
   if (Object.keys(errors).length) throw new HttpError(422, 'Please correct the highlighted fields.', errors);
 
-  const institutionId = caller.role === 'admin' && schema.has('institution_id') && caller.institution_id
-    ? caller.institution_id
-    : await drAitInstitutionId(admin, schema);
+  // Students always belong to Dr. AIT (profiles_scoped_role_chk requires an
+  // institution). Throws if the institutions table exists without the 1DA row.
+  const institutionId = await drAitInstitutionId(admin, schema);
 
   // Duplicates: Student ID / USN and email, across Auth and profiles. Nothing is written yet.
   if ((await findProfilesBy(admin, schema, 'usn', value.usn)).length) {

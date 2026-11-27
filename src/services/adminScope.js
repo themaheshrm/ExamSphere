@@ -2,7 +2,7 @@ import { SUBJECTS, subjectByCode, subjectForQuestion } from '../data/subjectCata
 import { demoAdmin, demoAdminByEmail } from '../data/demoAdmins.js';
 import { USER_ROLES } from '../utils/constants.js';
 
-/** The institution-wide examination that predates subject scoping. */
+/** The examination that predates subject scoping (managed by the super admin). */
 export const DEFAULT_EXAM_CODE = '22CS601';
 
 /**
@@ -10,12 +10,16 @@ export const DEFAULT_EXAM_CODE = '22CS601';
  *
  * The scope is derived from the server-verified profile (role + staff_id are
  * re-read from Supabase `profiles` on every sign-in / page load, never from
- * client storage). Subject-scoped admins get exactly one subject; the
- * hierarchy is unchanged: institution admins and super admins see everything.
+ * client storage). Three roles: the super admin sees everything; every
+ * administrator ('admin') is a Subject Admin limited to exactly one subject;
+ * an administrator without a valid subject has no examination access.
+ * The database enforces the same scope (migration 011 RLS + guards).
  *
  * Returns { scoped, subjectCodes, canManageInstitution, label }.
  */
 const NO_ACCESS = { scoped: true, subjectCodes: [], canManageInstitution: false, label: 'No access' };
+const NO_SUBJECT = { scoped: true, subjectCodes: [], canManageInstitution: false, label: 'No subject assigned' };
+const PLATFORM = () => ({ scoped: false, subjectCodes: SUBJECTS.map((s) => s.code), canManageInstitution: true, label: 'All subjects' });
 
 /**
  * Subject-admin identities matched by ANY signal: profiles.staff_id, the
@@ -40,10 +44,6 @@ export function getAdminScope(user) {
     const subject = subjectByCode(signed.subjectCode);
     return subject ? subjectScope(subject) : NO_ACCESS; // unknown subject: deny
   }
-  if (user.role === USER_ROLES.ADMIN && signed.adminType === 'subject') return NO_ACCESS; // subject admin without a subject
-  if (user.role === USER_ROLES.ADMIN && signed.adminType === 'institution') {
-    return { scoped: false, subjectCodes: SUBJECTS.map((s) => s.code), canManageInstitution: true, label: 'All subjects' };
-  }
   // 2. Otherwise the demo registry (ADMIN001–005), fail-closed.
   const matches = matchedSubjectAdmins(user);
   if (matches.length > 1) return NO_ACCESS; // conflicting identities: deny rather than guess
@@ -51,7 +51,9 @@ export function getAdminScope(user) {
     // Any role carrying a subject-admin identity is held to that subject.
     return subjectScope(subjectByCode(matches[0].subjectCode));
   }
-  return { scoped: false, subjectCodes: SUBJECTS.map((s) => s.code), canManageInstitution: true, label: 'All subjects' };
+  // 3. Super admin: platform-wide. Any other administrator (including a
+  //    legacy admin_type 'institution' account) has no subject yet → no access.
+  return user.role === USER_ROLES.SUPER_ADMIN ? PLATFORM() : NO_SUBJECT;
 }
 
 export function canManageSubject(scope, subjectCode) {
@@ -60,7 +62,7 @@ export function canManageSubject(scope, subjectCode) {
   return scope.subjectCodes.includes(String(subjectCode ?? '').toUpperCase());
 }
 
-/** Exam codes an admin may open: subject exams in scope (+ 22CS601 for institution-wide admins). */
+/** Exam codes an admin may open: subject exams in scope (+ 22CS601 for the super admin). */
 export function examCodesFor(scope) {
   if (!scope) return [];
   return scope.scoped ? [...scope.subjectCodes] : [DEFAULT_EXAM_CODE, ...scope.subjectCodes];

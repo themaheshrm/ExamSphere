@@ -73,6 +73,8 @@ export const NAVIGATION_CONFIG = {
           { label: 'Admin Dashboard', path: '/admin', icon: BarChart3 },
           { label: 'Examinations', path: '/admin/exams', icon: FileSpreadsheet },
           { label: 'Question Bank', path: '/admin/questions', icon: HelpCircle },
+          { label: 'Candidates', path: '/admin/students', icon: Users },
+          { label: 'Results & Reports', path: '/admin/results', icon: ClipboardList },
         ],
       },
       {
